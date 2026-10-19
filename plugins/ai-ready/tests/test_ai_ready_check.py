@@ -110,7 +110,7 @@ class CheckerTest(unittest.TestCase):
     def test_fenced_blocks(self):
         write(self.root, "Makefile", "test:\n\techo ok\n")
         write(self.root, "docs/setup.md",
-              "```sh\nmake test\nmake lint\n# [not a link](nowhere.md)\n```\n"
+              "```sh\nmake test\nmake lint\nmake -C sub -j4 test V=1\n# [not a link](nowhere.md)\n```\n"
               "Make sure you `make` friends.\n")
         self.assertEqual(self.checks(), [("missing-command", "docs/setup.md", "make:lint")])
 
@@ -200,6 +200,101 @@ class CheckerTest(unittest.TestCase):
         code, err = self.run_hook("post-edit", payload)
         self.assertEqual(code, 2)
         self.assertIn("instructions-size", err)
+
+    def make_monorepo(self):
+        write(self.root, "pnpm-lock.yaml", "")
+        write(self.root, "package.json", json.dumps({"workspaces": ["apps/*"],
+                                                    "scripts": {"build": "turbo build"}}))
+        write(self.root, "apps/web/package.json",
+              json.dumps({"name": "web", "scripts": {"dev": "vite", "test": "vitest"}}))
+        write(self.root, "apps/web/README.md", "# Web\n")
+        write(self.root, "apps/web/examples/demo/package.json", "{}")
+        write(self.root, "api/pyproject.toml", "[tool.pytest.ini_options]\n")
+        write(self.root, "api/Makefile", "run:\n\tpython -m api\n")
+
+    def test_discover(self):
+        self.make_monorepo()
+        found = {c["path"]: c for c in arc.discover(self.root, arc.load_config(self.root))}
+        self.assertEqual(sorted(found), [".", "api", "apps/web"])
+        self.assertTrue(found["."]["workspace_root"])
+        self.assertEqual((found["apps/web"]["run"], found["apps/web"]["test"]),
+                         ("cd apps/web && pnpm run dev", "cd apps/web && pnpm run test"))
+        self.assertEqual(found["apps/web"]["docs"], ["apps/web/README.md"])
+        self.assertEqual((found["api"]["run"], found["api"]["test"]),
+                         ("cd api && make run", "cd api && python -m pytest"))
+
+    def test_discover_single_project_keeps_same_stack_packages_inside(self):
+        (self.root / "package.json").unlink()
+        write(self.root, "pyproject.toml", "")
+        write(self.root, "examples/app/pyproject.toml", "")
+        write(self.root, "tools/gen/pyproject.toml", "")
+        write(self.root, "web/package.json", json.dumps({"scripts": {"test": "jest"}}))
+        paths = [c["path"] for c in arc.discover(self.root, arc.load_config(self.root))]
+        self.assertEqual(paths, [".", "web"])
+
+    def test_component_map_checks(self):
+        self.make_monorepo()
+        manifest = {"abstract": "", "components": [
+            {"name": "web", "path": "apps/web", "responsibility": "UI", "docs": ["apps/web/README.md"],
+             "run": "cd apps/web && pnpm run dev", "test": "cd apps/web && pnpm run e2e",
+             "test_needs": ["network"]},
+            {"name": "gone", "path": "svc/gone", "responsibility": "x"},
+        ]}
+        write(self.root, ".ai-ready/components.json", json.dumps(manifest))
+        self.assertEqual(self.checks(), [
+            ("component-command", ".ai-ready/components.json", "test:web:e2e"),
+            ("component-map", ".ai-ready/components.json", "abstract"),
+            ("component-path", ".ai-ready/components.json", "gone"),
+            ("component-test-deps", ".ai-ready/components.json", "needs:web:network"),
+            ("unmapped-component", ".ai-ready/components.json", "api"),
+        ])
+        manifest = {"abstract": "Demo.", "components": [
+            {"name": "web", "path": "apps/web", "responsibility": "UI", "docs": ["apps/web/README.md"],
+             "run": "cd apps/web && pnpm run dev", "test": "cd apps/web && pnpm run test"},
+            {"name": "api", "path": "api", "responsibility": "API", "docs": ["api/CLAUDE.md"],
+             "library": True, "test": "cd api && make test"},
+        ]}
+        write(self.root, ".ai-ready/components.json", json.dumps(manifest))
+        self.assertEqual(self.checks(), [
+            ("component-command", ".ai-ready/components.json", "test:api:make:test"),
+            ("component-docs", ".ai-ready/components.json", "doc:api:api/CLAUDE.md"),
+        ])
+
+    def test_component_drift(self):
+        self.make_monorepo()
+        write(self.root, ".ai-ready/components.json", json.dumps({"abstract": "x", "components": [
+            {"name": "web", "path": "apps/web", "responsibility": "UI",
+             "docs": ["apps/web/README.md"], "run": "x", "test": "y"},
+            {"name": "api", "path": "api", "responsibility": "API", "docs": ["README.md"],
+             "run": "x", "test": "y"}]}))
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "map")
+        self.assertEqual(self.checks(base="HEAD"), [])
+        write(self.root, "apps/web/package.json", json.dumps({"name": "web", "scripts": {}}))
+        write(self.root, "apps/web/src/main.ts", "")
+        self.assertEqual(self.checks(base="HEAD"), [("component-drift", "apps/web/README.md", "web")])
+        write(self.root, "apps/web/README.md", "# Web\nNo scripts now.\n")
+        self.assertEqual(self.checks(base="HEAD"), [])
+
+    def test_nested_claude_md_has_the_same_budget(self):
+        write(self.root, "api/CLAUDE.md", "line\n" * 61)
+        self.assertEqual(self.checks(), [("instructions-size", "api/CLAUDE.md", "too-large")])
+
+    def test_explain_and_verify_tests(self):
+        write(self.root, ".ai-ready/components.json", json.dumps({"abstract": "A demo app.", "components": [
+            {"name": "ok", "path": "src", "responsibility": "works", "docs": ["README.md"],
+             "test": "python3 -c 'print(1)'", "test_needs": ["docker"]},
+            {"name": "bad", "path": "docs", "responsibility": "fails", "test": "exit 3"},
+            {"name": "none", "path": "docs", "responsibility": "untested"}]}))
+        code, out = self.run_main("--explain")
+        self.assertEqual(code, 0)
+        self.assertIn("A demo app.", out)
+        self.assertIn("| ok | `src` | works | README.md | - | `python3 -c 'print(1)'` (needs docker) |", out)
+        results = {r["component"]: r["status"] for r in arc.verify_tests(
+            self.root, arc.load_config(self.root), None, 60)}
+        self.assertEqual(results, {"ok": "passed", "bad": "failed", "none": "missing"})
+        self.assertEqual(self.run_main("--verify-tests", "ok")[0], 0)
+        self.assertEqual(self.run_main("--verify-tests")[0], 1)
 
     def test_hooks_are_inactive_without_config(self):
         write(self.root, "docs/setup.md", "[x](missing.md)\n")

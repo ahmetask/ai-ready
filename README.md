@@ -2,9 +2,14 @@
 
 A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
 
-- **`make-ai-ready` skill**: makes the repository clean, well structured and compact. It prunes
-  stale docs (deleting only with your go-ahead), merges duplicates into one place per topic,
-  writes or trims a lean `CLAUDE.md`, and writes a prioritized plan to `.ai-ready/plan.md`.
+- **`make-ai-ready` skill**: first works out what the repository is. It maps the abstract and
+  each component's responsibility, docs, run command and test command, and records what the
+  tests need, in `.ai-ready/components.json`. Then it makes the repo clean, well structured
+  and compact. It prunes stale docs (deleting only with your go-ahead), keeps one place per
+  topic, gives each component a short `CLAUDE.md`, writes or trims a lean root `CLAUDE.md`,
+  and writes a prioritized plan to `.ai-ready/plan.md`.
+- **`/ai-ready:explain`**: a read-only overview of the repo: the abstract, plus each component
+  with its responsibility, docs and run/test commands.
 - **ai-ready check**: a fast, dependency-free checker that fails when a change makes the repo
   less AI ready. It runs as Claude Code hooks, as a slash command, in GitHub Actions, and in
   pre-commit.
@@ -39,6 +44,18 @@ Then, in the repository you want to prepare, ask Claude to "make this repo AI re
 | `missing-command` | error in agent instructions, warning elsewhere | Documented `npm/pnpm/yarn/bun run <x>` or `make <x>` with no such script or target |
 | `doc-drift` | configurable | Code covered by a `doc_watch` rule changed without its docs |
 
+With a component map (`.ai-ready/components.json`):
+
+| Check | Severity | What it catches |
+|---|---|---|
+| `component-path` | error | A mapped component's path no longer exists |
+| `component-docs` | error if a listed doc is missing, warning if none listed | Components without docs |
+| `component-command` | error if it uses an undefined script or make target, warning if missing | Run and test commands per component (`"library": true` needs no run command) |
+| `component-map` | warning | No abstract, or a component without a responsibility |
+| `component-test-deps` | warning | Tests that need `network`, `database`, `docker`, `secrets`, `cloud` or a `service` |
+| `unmapped-component` | warning | A directory with its own build file that the map doesn't cover |
+| `component-drift` | warning | A component's build or setup files changed but its docs did not |
+
 It prints a readiness score (100, minus 10 per error and 2 per warning) and exits non-zero when
 there are **new** failing issues. Pre-existing issues you accept when adopting the tool are kept
 in `.ai-ready/baseline.json`, so you can turn it on today and pay the debt down over time.
@@ -46,7 +63,37 @@ in `.ai-ready/baseline.json`, so you can turn it on today and pay the debt down 
 ```
 python3 plugins/ai-ready/scripts/ai_ready_check.py [--root DIR] [--format text|json]
     [--base REF] [--no-baseline] [--update-baseline] [--init]
+python3 plugins/ai-ready/scripts/ai_ready_check.py --discover        # candidate components (JSON)
+python3 plugins/ai-ready/scripts/ai_ready_check.py --explain         # abstract + component table
+python3 plugins/ai-ready/scripts/ai_ready_check.py --verify-tests [COMPONENT] [--timeout 600]
 ```
+
+## Component map
+
+`.ai-ready/components.json` describes the repository for agents and humans. The skill
+writes it, and you can also edit it by hand:
+
+```json
+{
+  "abstract": "Two or three lines: what the project is and how the parts fit together.",
+  "components": [
+    {
+      "name": "api",
+      "path": "services/api",
+      "responsibility": "HTTP API; owns the orders database.",
+      "docs": ["services/api/CLAUDE.md"],
+      "run": "cd services/api && go run ./cmd/api",
+      "test": "cd services/api && go test ./...",
+      "test_needs": []
+    }
+  ]
+}
+```
+
+`--discover` proposes candidates from build files (`package.json`, `pyproject.toml`, `go.mod`,
+`Cargo.toml`, Maven/Gradle, `Gemfile`, `Dockerfile`...) and guesses their commands.
+`--verify-tests` runs each component's test command once and reports pass/fail and duration,
+which is useful in CI or when checking that tests really run without extra setup.
 
 ## Configuration
 

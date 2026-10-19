@@ -14,13 +14,27 @@ _Generated <date> by the ai-ready skill. Checker score: <before>/100 to <after>/
 | Build/test/lint/run commands | | | |
 | Docs accuracy | | | |
 | Doc structure | | | |
-| Architecture and navigation | | | |
+| Components understood | | | |
 | Environment setup | | | |
 | Feedback loops | | | |
 | Conventions | | | |
 | Safety rails | | | |
 | Staying ready | | | |
 | **Total (0-30)** | | | |
+
+## Components
+
+<The abstract, then one row per component. Link `.ai-ready/components.json`.>
+
+| Component | Responsibility | Docs | Run | Test | Tests ran? | Time | Needs |
+|---|---|---|---|---|---|---|---|
+| | | | | | yes / failed / no command | | network, database, ... |
+
+## Making tests easy to run
+
+<For each component whose tests failed, were missing, were slow, or needed services or
+secrets: the concrete change (a fake or in-memory adapter, SQLite, recorded fixtures, one
+`make test`, splitting unit from integration tests). Each one also goes in the backlog.>
 
 ## Cleanup done
 

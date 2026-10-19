@@ -13,9 +13,21 @@ Deterministic, stdlib-only checks that an agent (or a human) can rely on:
   missing-command     `npm run x` / `make x` in docs match a real script / target
   doc-drift           code covered by a doc_watch rule changed without its docs
 
+With a component map (.ai-ready/components.json: abstract, and per component its path,
+responsibility, docs, run and test commands, and what its tests need):
+
+  component-path      a mapped component's path exists
+  component-map       the abstract and each responsibility are filled in
+  component-docs      each component has docs, and they exist
+  component-command   run/test commands exist and use real scripts / make targets
+  component-test-deps tests that need network, a database, docker, secrets... (warning)
+  unmapped-component  a directory with its own build file is missing from the map
+  component-drift     a component's build/setup files changed but its docs did not
+
 Usage:
   ai_ready_check.py [--root DIR] [--format text|json] [--base REF]
                     [--update-baseline] [--no-baseline] [--init]
+  ai_ready_check.py --discover | --explain | --verify-tests [COMPONENT] [--timeout S]
   ai_ready_check.py --hook post-edit|stop      (reads Claude Code hook JSON on stdin)
 
 Configuration lives in .ai-ready/config.json; accepted pre-existing issues live in
@@ -31,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import unquote
@@ -38,6 +51,7 @@ from urllib.parse import unquote
 CONFIG_DIR = ".ai-ready"
 CONFIG_FILE = f"{CONFIG_DIR}/config.json"
 BASELINE_FILE = f"{CONFIG_DIR}/baseline.json"
+COMPONENTS_FILE = f"{CONFIG_DIR}/components.json"
 
 DEFAULT_CONFIG = {
     "instruction_files": ["CLAUDE.md", "AGENTS.md"],
@@ -64,7 +78,7 @@ REF_LINK_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
 INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1")
 FENCE_RE = re.compile(r"^\s{0,3}(```|~~~)")
 SCRIPT_RE = re.compile(r"\b(?:npm|pnpm|yarn|bun)\s+run\s+([A-Za-z0-9_:.\-]+)")
-MAKE_RE = re.compile(r"(?:^|&&|;|\$\s*)\s*make\s+((?:[A-Za-z0-9_.\-/]+\s*)+)")
+MAKE_RE = re.compile(r"(?:^|&&|;|\$\s*)\s*make\s+((?:[A-Za-z0-9_.\-/=]+\s*)+)")
 MAKE_TARGET_RE = re.compile(r"^([A-Za-z0-9_.\-/ ]+?)\s*::?(?!=)")
 PATH_TOKEN_RE = re.compile(r"^(?:\./|\.\./)*[A-Za-z0-9_@.\-]+(?:/[A-Za-z0-9_@.\-]+)*/?$")
 
@@ -198,6 +212,19 @@ def exists_from(root: Path, md: Path, target: str) -> bool:
     return (md.parent / target).exists() or (root / target).exists()
 
 
+def make_goals(args: str) -> list[str]:
+    """Targets named in `make` arguments, skipping options, their values and VAR=x."""
+    goals, skip = [], False
+    for tok in args.split():
+        if skip:
+            skip = False
+        elif tok in ("-C", "-f", "-I", "-o", "-W", "--directory", "--file"):
+            skip = True
+        elif not tok.startswith("-") and "=" not in tok:
+            goals.append(tok)
+    return goals
+
+
 def looks_like_path(token: str) -> bool:
     token = token.strip().rstrip(".,;:")
     if " " in token or "/" not in token or "://" in token:
@@ -315,9 +342,7 @@ def check_markdown(root: Path, md: Path, cfg: dict, facts: Facts) -> list[Issue]
                         f"documents '{m.group(0)}' but no package.json defines script '{name}'",
                         lineno)
             for m in MAKE_RE.finditer(chunk.strip()):
-                for target in m.group(1).split():
-                    if target.startswith("-") or "=" in target:
-                        continue
+                for target in make_goals(m.group(1)):
                     if target not in facts.targets():
                         add("missing-command", "error" if instruction else "warning",
                             f"make:{target}",
@@ -348,6 +373,16 @@ def check_instructions(root: Path, cfg: dict, f: str) -> list[Issue]:
     return issues
 
 
+def instruction_paths(root: Path, cfg: dict) -> list[str]:
+    """Root instruction files plus nested CLAUDE.md / AGENTS.md (loaded when working there)."""
+    paths = [f for f in cfg["instruction_files"] if (root / f).is_file()]
+    for p in walk_files(root, cfg["ignore"]):
+        r = rel(root, p)
+        if p.name in ("CLAUDE.md", "AGENTS.md") and r not in paths:
+            paths.append(r)
+    return paths
+
+
 def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
     issues: list[Issue] = []
     found = [f for f in cfg["instruction_files"] if (root / f).is_file()]
@@ -355,7 +390,7 @@ def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
         names = " or ".join(cfg["instruction_files"])
         issues.append(Issue("instructions-file", "error", ".", f"no agent instructions file ({names})",
                             "missing"))
-    for f in found:
+    for f in instruction_paths(root, cfg):
         issues += check_instructions(root, cfg, f)
     if not any(p.is_file() and p.name.lower().split(".")[0] == "readme" for p in root.iterdir()):
         issues.append(Issue("readme", "error", ".", "no README", "missing"))
@@ -406,11 +441,275 @@ def run_checks(root: Path, cfg: dict, base: str | None = None,
                if (p.suffix.lower() in (".md", ".mdx") or p.name in INSTRUCTION_NAMES)
                and not HISTORY_RE.match(p.name)]
         issues += check_doc_drift(root, cfg, base)
+        issues += check_components(root, cfg, base)
     else:
         mds = only
     for md in sorted(mds):
         issues += check_markdown(root, md, cfg, facts)
     return issues
+
+
+# ------------------------------------------------------------------ components
+
+BUILD_FILES = {
+    "package.json": "node", "pyproject.toml": "python", "setup.py": "python", "go.mod": "go",
+    "Cargo.toml": "rust", "pom.xml": "java", "build.gradle": "java", "build.gradle.kts": "java",
+    "Gemfile": "ruby", "composer.json": "php", "mix.exs": "elixir", "Dockerfile": "docker",
+}
+# Files that decide how a component is built, run or tested; changing one may stale its docs.
+SETUP_FILES = set(BUILD_FILES) | {"Makefile", "pnpm-workspace.yaml", "requirements.txt",
+                                  "docker-compose.yml", "compose.yaml", "tox.ini", "setup.cfg"}
+DOC_NAMES = ("CLAUDE.md", "AGENTS.md", "README.md", "readme.md", "Readme.md")
+TEST_NEEDS = {"network", "database", "docker", "secrets", "cloud", "service"}
+NPM_DEFAULT_TEST = "no test specified"
+# Build files under these directories belong to samples or test data, not separate components.
+NOT_COMPONENT_DIRS = {"examples", "example", "samples", "sample", "fixtures", "testdata",
+                      "test", "tests", "docs", "doc", "benchmarks", "e2e"}
+
+
+def load_components(root: Path) -> dict | None:
+    data = load_json(root / COMPONENTS_FILE, None)
+    if not isinstance(data, dict) or not isinstance(data.get("components"), list):
+        return None
+    return data
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _package_manager(root: Path) -> str:
+    for lock, pm in (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("bun.lockb", "bun"),
+                     ("bun.lock", "bun")):
+        if (root / lock).is_file():
+            return pm
+    return "npm"
+
+
+def _make_targets(d: Path) -> set[str]:
+    try:
+        lines = (d / "Makefile").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return set()
+    out: set[str] = set()
+    for line in lines:
+        m = None if line.startswith(("\t", "#", " ")) else MAKE_TARGET_RE.match(line)
+        if m:
+            out.update(m.group(1).split())
+    return out
+
+
+def _commands(root: Path, d: Path, kinds: list[str]) -> tuple[str | None, str | None]:
+    """Best guess at (run, test) for a component directory."""
+    prefix = "" if d == root else f"cd {rel(root, d)} && "
+    run = test = None
+    targets = _make_targets(d)
+    for t in ("dev", "run", "start", "serve"):
+        if t in targets:
+            run = f"{prefix}make {t}"
+            break
+    if "test" in targets:
+        test = f"{prefix}make test"
+    if "node" in kinds:
+        pm = _package_manager(root)
+        scripts = (load_json(d / "package.json", {}) or {}).get("scripts") or {}
+        if not run:
+            run = next((f"{prefix}{pm} run {s}" for s in ("dev", "start", "serve") if s in scripts), None)
+        if not test and "test" in scripts and NPM_DEFAULT_TEST not in str(scripts["test"]):
+            test = f"{prefix}{pm} run test"
+    if "python" in kinds and not test:
+        text = ""
+        for f in ("pyproject.toml", "setup.cfg", "tox.ini"):
+            try:
+                text += (d / f).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                pass
+        uses_pytest = "pytest" in text or (d / "conftest.py").is_file()
+        test = f"{prefix}{'python -m pytest' if uses_pytest else 'python -m unittest'}"
+    if "go" in kinds:
+        test = test or f"{prefix}go test ./..."
+        if not run and (d / "main.go").is_file():
+            run = f"{prefix}go run ."
+    if "rust" in kinds:
+        test, run = test or f"{prefix}cargo test", run or f"{prefix}cargo run"
+    if "java" in kinds and not test:
+        if (d / "pom.xml").is_file():
+            test = f"{prefix}mvn test"
+        else:
+            test = f"{prefix}{'./gradlew' if (d / 'gradlew').is_file() else 'gradle'} test"
+    if "ruby" in kinds and not test:
+        test = f"{prefix}bundle exec {'rspec' if (d / 'spec').is_dir() else 'rake test'}"
+    return run, test
+
+
+def discover(root: Path, cfg: dict) -> list[dict]:
+    """Candidate components: directories holding a build file, outermost first."""
+    found: dict[Path, list[str]] = {}
+    for p in walk_files(root, cfg["ignore"]):
+        kind = BUILD_FILES.get(p.name)
+        if kind:
+            found.setdefault(p.parent, []).append(kind)
+    dirs = [d for d in sorted(found, key=lambda d: (len(d.parts), str(d)))
+            if not NOT_COMPONENT_DIRS & set(Path(rel(root, d)).parts)]
+    root_kinds = set(found.get(root, []))
+    workspace = root in found and len(dirs) > 1 and (
+        (root / "pnpm-workspace.yaml").is_file() or (root / "go.work").is_file()
+        or "workspaces" in (load_json(root / "package.json", {}) or {})
+        or "[workspace]" in _read(root / "Cargo.toml") or root_kinds <= {"docker"})
+    out = []
+    for d in dirs:
+        kinds = sorted(set(found[d]))
+        if d != root:
+            # A package inside another component is part of it, unless the root is a workspace
+            # or the package is a different stack (a node frontend in a python repo).
+            parents = [o for o in dirs if o in d.parents and (o != root or not workspace)]
+            if any(o != root or set(kinds) <= root_kinds for o in parents):
+                continue
+        workspace_root = d == root and workspace
+        pkg = load_json(d / "package.json", {}) or {}
+        run, test = _commands(root, d, kinds)
+        out.append({
+            "name": pkg.get("name") if isinstance(pkg.get("name"), str) else (d.name or root.name),
+            "path": "." if d == root else rel(root, d),
+            "kinds": kinds,
+            "workspace_root": bool(workspace_root),
+            "docs": [rel(root, d / n) for n in DOC_NAMES if (d / n).is_file()],
+            "run": run,
+            "test": test,
+        })
+    return out
+
+
+def _covered(path: str, components: list[dict]) -> bool:
+    for c in components:
+        cp = str(c.get("path", "")).strip("/") or "."
+        if cp == "." or path == cp or path.startswith(cp + "/"):
+            return True
+    return False
+
+
+def check_components(root: Path, cfg: dict, base: str | None) -> list[Issue]:
+    manifest = load_components(root)
+    if manifest is None:
+        return []
+    issues: list[Issue] = []
+    comps = [c for c in manifest["components"] if isinstance(c, dict)]
+    if not str(manifest.get("abstract", "")).strip():
+        issues.append(Issue("component-map", "warning", COMPONENTS_FILE,
+                            "no abstract: say in a few lines what the project is", "abstract"))
+    facts = Facts(root, cfg)
+    for c in comps:
+        name, path = str(c.get("name") or c.get("path")), str(c.get("path", ""))
+        if not path or not (root / path).exists():
+            issues.append(Issue("component-path", "error", COMPONENTS_FILE,
+                                f"component '{name}' points at '{path}', which does not exist", name))
+            continue
+        if not str(c.get("responsibility", "")).strip():
+            issues.append(Issue("component-map", "warning", COMPONENTS_FILE,
+                                f"component '{name}' has no responsibility", f"responsibility:{name}"))
+        docs = [str(d) for d in c.get("docs") or []]
+        if not docs:
+            issues.append(Issue("component-docs", "warning", COMPONENTS_FILE,
+                                f"component '{name}' has no docs", f"docs:{name}"))
+        for d in docs:
+            if not (root / d).is_file():
+                issues.append(Issue("component-docs", "error", COMPONENTS_FILE,
+                                    f"component '{name}' lists doc '{d}', which does not exist",
+                                    f"doc:{name}:{d}"))
+        for field in ("run", "test"):
+            cmd = c.get(field)
+            if not cmd:
+                if field == "test" or not c.get("library"):
+                    issues.append(Issue("component-command", "warning", COMPONENTS_FILE,
+                                        f"component '{name}' has no {field} command",
+                                        f"{field}:{name}"))
+                continue
+            for m in SCRIPT_RE.finditer(str(cmd)):
+                if m.group(1) not in facts.scripts():
+                    issues.append(Issue("component-command", "error", COMPONENTS_FILE,
+                                        f"component '{name}' {field} command uses '{m.group(0)}', "
+                                        "but no package.json defines it", f"{field}:{name}:{m.group(1)}"))
+            for m in MAKE_RE.finditer(str(cmd)):
+                for target in make_goals(m.group(1)):
+                    if target not in facts.targets():
+                        issues.append(Issue("component-command", "error", COMPONENTS_FILE,
+                                            f"component '{name}' {field} command uses 'make {target}', "
+                                            "but no Makefile defines it", f"{field}:{name}:make:{target}"))
+        needs = sorted(set(map(str, c.get("test_needs") or [])))
+        if needs:
+            issues.append(Issue("component-test-deps", "warning", COMPONENTS_FILE,
+                                f"component '{name}' tests need {', '.join(needs)}; make them run "
+                                "offline with fakes or local stand-ins", f"needs:{name}:{','.join(needs)}"))
+    for cand in discover(root, cfg):
+        if cand["workspace_root"] or _covered(cand["path"], comps):
+            continue
+        issues.append(Issue("unmapped-component", "warning", COMPONENTS_FILE,
+                            f"'{cand['path']}' looks like a component ({', '.join(cand['kinds'])}) "
+                            "but is not in the component map", cand["path"]))
+    changed = changed_files(root, base) or set()
+    for c in comps:
+        cp = str(c.get("path", "")).strip("/")
+        if not cp:
+            continue
+        inside = [f for f in changed if cp == "." or f.startswith(cp + "/")]
+        setup = sorted(f for f in inside if Path(f).name in SETUP_FILES)
+        docs = [str(d) for d in c.get("docs") or [] if (root / str(d)).is_file()]
+        if setup and docs and not any(d in changed for d in docs):
+            issues.append(Issue("component-drift", "warning", docs[0],
+                                f"{', '.join(setup[:3])} changed but the docs of component "
+                                f"'{c.get('name') or cp}' did not; check its run and test commands",
+                                str(c.get("name") or cp)))
+    return issues
+
+
+def explain(root: Path, cfg: dict) -> str:
+    manifest = load_components(root)
+    comps = manifest["components"] if manifest else discover(root, cfg)
+    lines = [f"# {root.name}", ""]
+    if manifest:
+        lines += [str(manifest.get("abstract", "")).strip() or "_No abstract yet._", ""]
+    else:
+        lines += [f"_No {COMPONENTS_FILE} yet; these components were detected from build files. "
+                  "Run the make-ai-ready skill to write the map._", ""]
+    lines += ["| Component | Path | Responsibility | Docs | Run | Test |", "|---|---|---|---|---|---|"]
+    for c in comps:
+        if c.get("workspace_root"):
+            continue
+        cell = lambda v: f"`{v}`" if v else "-"  # noqa: E731
+        lines.append("| {} | {} | {} | {} | {} | {}{} |".format(
+            c.get("name", ""), cell(c.get("path")), c.get("responsibility") or "-",
+            ", ".join(c.get("docs") or []) or "-", cell(c.get("run")), cell(c.get("test")),
+            f" (needs {', '.join(c['test_needs'])})" if c.get("test_needs") else ""))
+    return "\n".join(lines)
+
+
+def verify_tests(root: Path, cfg: dict, only: str | None, timeout: int) -> list[dict]:
+    """Run each component's test command once; report outcome and duration."""
+    manifest = load_components(root)
+    comps = manifest["components"] if manifest else [c for c in discover(root, cfg)
+                                                     if not c["workspace_root"]]
+    results = []
+    for c in comps:
+        name, cmd = c.get("name") or c.get("path"), c.get("test")
+        if only and only not in (name, c.get("path")):
+            continue
+        if not cmd:
+            results.append({"component": name, "command": None, "status": "missing"})
+            continue
+        start = time.monotonic()
+        try:
+            out = subprocess.run(cmd, shell=True, cwd=root, capture_output=True, text=True,
+                                 timeout=timeout)
+            status = "passed" if out.returncode == 0 else "failed"
+            tail = (out.stdout + out.stderr).strip().splitlines()[-15:]
+        except subprocess.TimeoutExpired:
+            status, tail = "timeout", []
+        results.append({"component": name, "command": cmd, "status": status,
+                        "seconds": round(time.monotonic() - start, 1), "output_tail": tail})
+    return results
 
 
 # ---------------------------------------------------------------------- reporting
@@ -435,10 +734,9 @@ def load_sizes(root: Path) -> dict:
 def write_baseline(root: Path, cfg: dict, issues: list[Issue]) -> None:
     (root / CONFIG_DIR).mkdir(exist_ok=True)
     sizes = {}
-    for f in cfg["instruction_files"]:
-        if (root / f).is_file():
-            size, lines = footprint(root / f)
-            sizes[f] = {"lines": lines, "bytes": size}
+    for f in instruction_paths(root, cfg):
+        size, lines = footprint(root / f)
+        sizes[f] = {"lines": lines, "bytes": size}
     data = {"comment": "Known issues accepted when ai-ready was adopted. Fix them and re-run "
                        "--update-baseline to shrink this list; never add to it by hand. "
                        "instruction_sizes caps over-budget instruction files at their current size.",
@@ -495,7 +793,7 @@ def hook(mode: str) -> int:
                 or not (p.suffix.lower() in (".md", ".mdx") or p.name in INSTRUCTION_NAMES)):
             return 0
         issues = run_checks(root, cfg, only=[p.resolve()])
-        if r in cfg["instruction_files"]:
+        if r in cfg["instruction_files"] or p.name in ("CLAUDE.md", "AGENTS.md"):
             issues += check_instructions(root, cfg, r)
 
     new = [i for i in failing(issues, cfg) if i.fingerprint not in baseline]
@@ -523,6 +821,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="accept all current issues into .ai-ready/baseline.json")
     ap.add_argument("--init", action="store_true", help="write a default .ai-ready/config.json")
     ap.add_argument("--hook", choices=["post-edit", "stop"], help="run as a Claude Code hook")
+    ap.add_argument("--discover", action="store_true",
+                    help="print candidate components detected from build files (JSON)")
+    ap.add_argument("--explain", action="store_true",
+                    help="print the abstract and component table (Markdown)")
+    ap.add_argument("--verify-tests", nargs="?", const="", metavar="COMPONENT",
+                    help="run each component's test command (or just COMPONENT's)")
+    ap.add_argument("--timeout", type=int, default=600, help="per-component test timeout (s)")
     args = ap.parse_args(argv)
 
     if args.hook:
@@ -540,6 +845,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     cfg = load_config(root)
+    if args.discover:
+        print(json.dumps(discover(root, cfg), indent=2))
+        return 0
+    if args.explain:
+        print(explain(root, cfg))
+        return 0
+    if args.verify_tests is not None:
+        results = verify_tests(root, cfg, args.verify_tests or None, args.timeout)
+        if args.format == "json":
+            print(json.dumps(results, indent=2))
+        else:
+            for r in results:
+                secs = f" in {r['seconds']}s" if "seconds" in r else ""
+                print(f"{r['status']:8} {r['component']}: {r['command'] or 'no test command'}{secs}")
+                if r["status"] in ("failed", "timeout"):
+                    print("\n".join("    " + l for l in r.get("output_tail", [])))
+        return 0 if all(r["status"] == "passed" for r in results) else 1
     issues = run_checks(root, cfg, base=args.base)
     if args.update_baseline:
         write_baseline(root, cfg, issues)

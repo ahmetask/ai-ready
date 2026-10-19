@@ -1,11 +1,13 @@
 ---
 name: make-ai-ready
-description: Make a repository clean, well structured and compact for AI agents - prune stale docs, consolidate the rest, write a lean CLAUDE.md, plan what's left, and turn on the ai-ready check. Use for "make this repo AI ready", doc cleanup, or writing or trimming CLAUDE.md/AGENTS.md.
+description: Make a repository understandable, clean and compact for AI agents - map its components (purpose, docs, how to run and test each), prune stale docs, write a lean CLAUDE.md, plan what's left, and turn on the ai-ready check. Use for "make this repo AI ready", onboarding a repo AI has never touched, doc cleanup, or writing or trimming CLAUDE.md/AGENTS.md.
 ---
 
 # Make a repository AI ready
 
-An AI-ready repository is **clean, well structured and compact**. An agent that arrives cold
+An AI-ready repository is **understood, clean, well structured and compact**. An agent that
+arrives cold can tell what the project is and what its components are. For each component
+it can find what it is responsible for, where its docs are, and how to run and test it. It
 finds a short `CLAUDE.md` with the commands, guardrails and gotchas. Every other doc is
 accurate, has one obvious place, and is read only when the task needs it. Stale docs are worse
 than missing docs, because agents trust them. Extra docs aren't free either: they cost tokens
@@ -24,7 +26,51 @@ stdlib only). Run it from the target repository's root. `references/criteria.md`
 readiness dimensions; read it before phase 1. Work on a branch so the result is one reviewable
 diff, and keep the user informed between phases.
 
-## Phase 1: Audit (read-only)
+## Phase 1: Understand the repo
+
+Do this first, before changing anything. It also suits a repo no agent has worked in before.
+
+1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --discover` lists candidate
+   components. These are directories with their own build file, together with guessed run
+   and test commands and the docs found in each. Treat this as a starting point, not the
+   answer. Group packages that only make sense together (for example `crates/*` behind one
+   CLI) into a single component whose path is their parent directory. Add components that
+   have no build file, such as a `scripts/` folder or infrastructure code.
+2. For each component, read its README, entry points, CI jobs and build file. Then work out:
+   - its **responsibility**, in one line, plus what it talks to;
+   - its **docs**: the files that explain it. A nested `<path>/CLAUDE.md` is the default
+     home for agent notes;
+   - how to **run** it: the exact command, taken from CI or the build file rather than
+     guessed. Set `"library": true` if the component isn't run on its own;
+   - how to **test** it: the exact command, for that component alone;
+   - what its tests **need** (`test_needs`): `network`, `database`, `docker`, `secrets`,
+     `cloud` or `service`. Leave it empty when the tests run offline with no setup.
+3. Write the **abstract**: two or three lines on what the project is, who uses it, and the
+   main flow between components.
+4. Run the test commands where that is safe (no deploys, no writes to shared state):
+   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --verify-tests`, or with a
+   component name to run just that one. Record which tests pass, how long they take, and
+   what they actually needed. Tests that need services, credentials or a long setup become
+   plan items (phase 5), with the concrete fix: a fake or in-memory adapter, SQLite instead
+   of a server, recorded HTTP fixtures, a `make test` that sets everything up, or a split
+   between fast unit tests and integration tests.
+5. Save the map as `.ai-ready/components.json`:
+
+   ```json
+   {"abstract": "...",
+    "components": [{"name": "api", "path": "services/api", "responsibility": "...",
+                    "docs": ["services/api/CLAUDE.md"], "run": "cd services/api && make dev",
+                    "test": "cd services/api && go test ./...", "test_needs": []}]}
+   ```
+
+   The check then keeps the map honest. It flags paths that no longer exist, missing docs,
+   undefined run or test commands, new components that aren't mapped, and components whose
+   build files changed while their docs didn't.
+6. Show the user the result of `--explain`: the abstract plus a table of components. Ask
+   them to correct anything wrong before you go on, because everything after this builds on
+   the map.
+
+## Phase 2: Audit the docs (read-only)
 
 1. Run the checker for a mechanical baseline:
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --no-baseline --format json`.
@@ -53,7 +99,7 @@ diff, and keep the user informed between phases.
 Show the user a short summary: overall readiness, the three worst gaps, and the proposed
 cleanup as a list grouped by **fix**, **merge** and **delete**, with one line per file.
 
-## Phase 2: Prune and restructure the docs
+## Phase 3: Prune and restructure the docs
 
 - **Delete** what is wholly obsolete. List every file you intend to delete with a one-line
   reason, and get the user's go-ahead before deleting. Never delete licenses, changelogs,
@@ -61,11 +107,15 @@ cleanup as a list grouped by **fix**, **merge** and **delete**, with one line pe
 - **Merge** duplicates into one canonical file per topic, and replace the others with a
   one-line pointer or remove them. A good default shape:
   - `README.md` is for humans: what it is, and how to install, run and contribute;
-  - `CLAUDE.md` is for agents (phase 3);
-  - `docs/` holds one file per topic (architecture, deploy, a specific subsystem), each
-    linked from `README.md` or `CLAUDE.md` so nothing is orphaned;
-  - per-directory detail goes in a nested `<dir>/CLAUDE.md`, which Claude Code loads only
-    when it works in that directory.
+  - `CLAUDE.md` is for agents (phase 4);
+  - `docs/architecture.md` holds the abstract and the component table from the map
+    (`--explain` prints it). Keep it in sync with `.ai-ready/components.json`;
+  - `docs/` holds one file per topic beyond that (deploy, a specific subsystem), each linked
+    from `README.md` or `CLAUDE.md` so nothing is orphaned;
+  - each component gets a nested `<path>/CLAUDE.md` of at most ~30 lines, covering what it
+    does, how to run and test it on its own, its gotchas and its guardrails. Claude Code
+    loads that file only when it works in that directory, so it costs nothing elsewhere.
+    Reuse a good component README instead of duplicating it.
 - **Fix** whatever has a clear correct answer: links to moved files, renamed paths, wrong
   commands (use what CI runs) and outdated versions. Keep the author's voice, and don't
   rewrite docs that are already correct.
@@ -74,7 +124,7 @@ cleanup as a list grouped by **fix**, **merge** and **delete**, with one line pe
 
 Re-run the checker afterwards. The findings for the files you touched should be gone.
 
-## Phase 3: Write a lean CLAUDE.md
+## Phase 4: Write a lean CLAUDE.md
 
 Write `CLAUDE.md`, or trim the existing one, to the budget: **under 60 lines and 4 KB,
 imports included**. That is usually 30 to 45 lines. A line belongs only if an agent couldn't
@@ -86,7 +136,8 @@ get it from the code in one or two tool calls, or would get it wrong without it:
   generated or hold production ids and must not be hand-edited; secrets never to commit.
 - **Gotchas**: non-obvious conventions and traps, one line each. For example, where a new
   module must be registered, or a builtin that shadows a script name.
-- **Layout**: top-level directories only, one line each, saying what lives where.
+- **Layout**: one line per component from the map, saying what lives where. Detail stays in
+  each component's own `CLAUDE.md` and in `docs/architecture.md`.
 - **Links**: the one or two deeper docs that matter, as plain links. Don't `@import` them,
   because an import is loaded every turn while a link is read only when needed.
 
@@ -97,18 +148,21 @@ anything `ls` or a linked doc already shows, and history.
 If the repo already uses `AGENTS.md`, keep the content there and make `CLAUDE.md` the single
 line `@AGENTS.md`. The budget applies to the pair.
 
-## Phase 4: Write the plan
+## Phase 5: Write the plan
 
 Write `.ai-ready/plan.md` (create the directory if needed) from
 `references/plan-template.md`. It includes:
 
 - the dimension scores with evidence, before and after;
-- what phases 2 and 3 changed (deleted, merged, fixed, `CLAUDE.md` lines before and after);
+- the component map (link it), with any component missing docs, a run command or a test command;
+- test ease: for each component, whether its tests ran, how long they took, and what they
+  needed, plus the steps to make them run offline with one command;
+- what phases 3 and 4 changed (deleted, merged, fixed, `CLAUDE.md` lines before and after);
 - a prioritized backlog of the remaining work. Each item says why it matters for agents,
   what to change, which files are involved, and the effort (S/M/L), with quick wins first;
 - open questions only a maintainer can answer.
 
-## Phase 5: Keep it clean
+## Phase 6: Keep it clean
 
 Turn on enforcement so the repo can't drift back:
 
@@ -132,6 +186,7 @@ Turn on enforcement so the repo can't drift back:
 
 ## Finish
 
-Report back in a few lines: readiness before and after, how many docs were deleted, merged
+Report back in a few lines: the abstract, the number of components, how many have working
+offline tests, readiness before and after, how many docs were deleted, merged
 and fixed, `CLAUDE.md` lines before and after, where the plan is (`.ai-ready/plan.md`), and
 whether enforcement is on. Don't paste the plan into chat.
