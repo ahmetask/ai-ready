@@ -1,0 +1,38 @@
+# myagent
+
+Personal AI assistant hub: a React hub (Cloudflare Pages) plus one Cloudflare Worker
+that bundles every agent (finance, language, mindmap, todo). pnpm + turbo monorepo, Node 22+.
+
+## Commands
+- Setup: `make setup` (pnpm install, scaffold the worker's `.dev.vars`, apply local D1 schemas)
+- Run: `make dev` (worker on 8787, hub on 5173; the hub proxies `/api` and `/auth` to the worker)
+- Typecheck: `pnpm typecheck` (only automated check; there are no tests, no linter, no CI)
+- Build: `pnpm build`
+- One package: `pnpm --filter @myagent/<hub|orchestrator|agent-finance|...> run <script>`
+
+## Guardrails
+- Do not run without being asked: `make deploy`, `make bootstrap`, `pnpm run deploy`,
+  any `wrangler deploy` / `pages deploy` / `secret put`, or `wrangler d1 execute --remote`.
+  They hit the live Cloudflare account.
+- `make dev`, `make stop` and `make kill` run `pkill -9 -f wrangler|workerd` (every such
+  process on the machine) and free ports 8787/5173.
+- `workers/orchestrator/wrangler.jsonc` holds the real production D1/KV ids; don't change them.
+- `agents/language/src/generatedContent.ts` is generated; don't hand-edit it (the generator
+  script named in its header is not in this repo).
+- Never commit `.dev.vars` or `.env.deploy`.
+
+## Gotchas
+- `pnpm run deploy`, never `pnpm deploy` (a pnpm builtin).
+- `VITE_API_BASE` is baked into the hub at build time; `make deploy` sets it.
+- Agents are in-process modules, not separate workers: register new ones in `AGENTS`
+  in `workers/orchestrator/src/index.ts`, and their panels in `apps/hub/src/panels/registry.ts`.
+- A new D1 table needs a `schema.sql` applied in both the Makefile `db` target and
+  `scripts/bootstrap-cloudflare.sh`.
+- Finance AI features are analysis only; nothing places trades.
+
+## Layout
+- `apps/hub` hub UI: one panel per agent under `src/panels/`, Home widgets under `src/widgets/`
+- `workers/orchestrator` the one API worker: discovery, `/api/a/:id/*` proxy, custom agents, auth
+- `agents/*` one bundled agent each; `packages/agent-contract` the shared manifest/invoke types
+
+Architecture and adding an agent: [wiki.md](./wiki.md). Deploy and secrets: [DEPLOY.md](./DEPLOY.md).

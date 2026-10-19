@@ -1,0 +1,37 @@
+# Repo map  <!-- generated @ 399c7e8; keep under 60 lines -->
+
+Stack: typescript (147), javascript (2), shell (1). pnpm + turbo monorepo. Manifests: Makefile, package.json, apps/hub, agents/{finance,language,mindmap,todo}, packages/agent-contract, workers/orchestrator.
+Entry points: agents/*/src/index.ts, packages/agent-contract/src/index.ts, workers/orchestrator/src/index.ts.
+Architecture: agents are plain modules bundled into the ONE orchestrator Worker and called in-process; hub (Cloudflare Pages) talks to it via apps/hub/src/api.ts.
+
+## Modules (most central first)
+
+| module | purpose | key files | depends on |
+|---|---|---|---|
+| apps/hub/src/panels | Per-agent full-page UIs (finance, language, mindmap, todo, custom) + panel registry; language/data holds static word/plan content | words.ts, b1Plan.ts, types.ts | apps/hub |
+| agents/finance | Finnhub quotes, indicators, portfolio, AI buy/hold/sell, swing and weekly picks | types.ts, finnhub.ts, cache.ts | - |
+| apps/hub | Hub SPA: App shell, sidebar, api.ts client for the orchestrator | api.ts, App.tsx, main.tsx | panels, components |
+| agents/language | German tutor: static content + AI exercises | types.ts, staticContent.ts, ai.ts | - |
+| apps/hub/src/widgets | Lazy per-agent Home widgets keyed by agent id (registry.ts) | registry.ts, Widget.tsx | panels, apps/hub |
+| apps/hub/src/components | Shared UI: Dashboard (Home), AgentCard, CreateAgentModal | AgentCard.tsx, Dashboard.tsx | apps/hub, widgets |
+| agents/mindmap | Mind-map agent: DB storage + AI generation | types.ts, db.ts, ai.ts | - |
+| agents/todo | Trello-style todo agent: DB storage + AI day planner | types.ts, db.ts, ai.ts | - |
+| workers/orchestrator | Single API Worker: auth, agent discovery/proxy (/api/a/:id/*), custom-agent registry | auth.ts, customAgents.ts, index.ts | - |
+| packages/agent-contract | Shared Agent Contract (manifest, /invoke) every agent implements | index.ts | - |
+| scripts | Cloudflare bootstrap script | bootstrap-cloudflare.sh | - |
+
+## Change together (from git history)
+- apps/hub/src/api.ts <-> workers/orchestrator/src/index.ts (8 commits, no import link)
+- apps/hub/src/App.tsx <-> workers/orchestrator/src/index.ts (7 commits, no import link)
+- apps/hub/src/panels/registry.ts <-> workers/orchestrator/src/index.ts (6 commits, no import link)
+- agents/finance/src/api.ts <-> apps/hub/src/panels/finance/pages/Dashboard.tsx (5 commits, no import link)
+- apps/hub/src/App.tsx <-> apps/hub/src/components/Dashboard.tsx (4 commits)
+
+## Fragile files (fix/revert history)
+- workers/orchestrator/src/index.ts, apps/hub/src/api.ts, workers/orchestrator/src/auth.ts: login/session-token bearer header fix
+- apps/hub/tailwind.config.js: stock detail navigation / dark theme fix
+
+## Finding things
+- Ask the index first: `ctxh q find|rdeps|impact|cochange|tests|owner|module <arg>`
+- Module cards: `.ctx/cards/<module-with-dashes>.md` (open only for the module you touch)
+- Gotchas learned from past tasks: `.ctx/learned.md`

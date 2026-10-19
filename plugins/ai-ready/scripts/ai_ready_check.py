@@ -4,7 +4,9 @@
 Deterministic, stdlib-only checks that an agent (or a human) can rely on:
 
   instructions-file   an agent instructions file (CLAUDE.md / AGENTS.md) exists
-  instructions-size   agent instructions stay small enough to be read every session
+  instructions-size   agent instructions (with their @imports) stay small: they are paid
+                      for on every turn
+  context-overlap     with ctx-harness: CLAUDE.md repeats what its hook already injects
   readme              a README exists
   broken-link         relative markdown links point at files that exist
   missing-path-ref    `inline/code/paths.ext` in docs point at files that exist
@@ -18,6 +20,10 @@ Usage:
 
 Configuration lives in .ai-ready/config.json; accepted pre-existing issues live in
 .ai-ready/baseline.json so only *new* problems fail CI and hooks.
+
+When the repository also uses ctx-harness (.ctx/map.md exists), .ctx/ is left to `ctxh check`,
+the injected map counts as agent instructions, and context-overlap flags CLAUDE.md content
+that the harness already puts in every session.
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ BASELINE_FILE = f"{CONFIG_DIR}/baseline.json"
 
 DEFAULT_CONFIG = {
     "instruction_files": ["CLAUDE.md", "AGENTS.md"],
-    "max_instructions_bytes": 40000,
+    "max_instructions_bytes": 8000,
     "ignore": [],
     "fail_on": "error",
     "min_score": 0,
@@ -54,6 +60,14 @@ SKIP_DIRS = {
 # Changelogs record history; old paths and commands in them are expected, not stale.
 HISTORY_RE = re.compile(r"^(changelog|changes|history|news|releases?|release[-_]notes)(\.\w+)?$", re.I)
 INSTRUCTION_NAMES = {"CLAUDE.md", "AGENTS.md", "copilot-instructions.md", ".cursorrules"}
+# Files Claude Code loads into every session by itself; anything else only through an @import.
+CLAUDE_LOADED = ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md")
+
+# ctx-harness (github.com/ahmetask/ctx-harness) injects .ctx/map.md at session start and owns
+# everything under .ctx/; its own `ctxh check` validates it.
+CTX_DIR = ".ctx"
+CTX_MAP = f"{CTX_DIR}/map.md"
+CTX_BLOCK = "<!-- ctx-harness:begin -->"
 
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'][^)]*[\"'])?\s*\)")
 REF_LINK_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
@@ -63,6 +77,10 @@ SCRIPT_RE = re.compile(r"\b(?:npm|pnpm|yarn|bun)\s+run\s+([A-Za-z0-9_:.\-]+)")
 MAKE_RE = re.compile(r"(?:^|&&|;|\$\s*)\s*make\s+((?:[A-Za-z0-9_.\-/]+\s*)+)")
 MAKE_TARGET_RE = re.compile(r"^([A-Za-z0-9_.\-/ ]+?)\s*::?(?!=)")
 PATH_TOKEN_RE = re.compile(r"^(?:\./|\.\./)*[A-Za-z0-9_@.\-]+(?:/[A-Za-z0-9_@.\-]+)*/?$")
+IMPORT_RE = re.compile(r"(?:^|\s)@((?:~/|\.{1,2}/)?[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*)")
+SHELL_COMMENT_RE = re.compile(r"\s+#\s.*$")
+MAP_SPLIT_RE = re.compile(r"[\s|,]+")
+MAX_REPEATED_MAP_PATHS = 4
 
 
 @dataclass
@@ -107,7 +125,13 @@ def load_config(root: Path) -> dict:
     user = load_json(root / CONFIG_FILE, {})
     if isinstance(user, dict):
         cfg.update(user)
+    if uses_ctx_harness(root):
+        cfg["ignore"] = list(cfg["ignore"]) + [CTX_DIR]
     return cfg
+
+
+def uses_ctx_harness(root: Path) -> bool:
+    return (root / CTX_MAP).is_file()
 
 
 def rel(root: Path, p: Path) -> str:
@@ -148,6 +172,44 @@ def split_markdown(text: str):
                 yield i, line, True
                 continue
         yield i, line, fence is not None
+
+
+def code_chunks(text: str):
+    """Yield (lineno, chunk): every fenced line and every inline code span."""
+    for lineno, line, in_fence in split_markdown(text):
+        if in_fence:
+            if not FENCE_RE.match(line):
+                yield lineno, line
+        else:
+            for m in INLINE_CODE_RE.finditer(line):
+                yield lineno, m.group(2)
+
+
+def with_imports(root: Path, path: Path, seen: set | None = None, depth: int = 0) -> list[Path]:
+    """`path` plus the files it pulls in with `@file` imports, as Claude Code loads them."""
+    seen = set() if seen is None else seen
+    try:
+        resolved = path.resolve()
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    if resolved in seen:
+        return []
+    seen.add(resolved)
+    files = [path]
+    if depth >= 5:
+        return files
+    for _, line, in_fence in split_markdown(text):
+        if in_fence:
+            continue
+        for m in IMPORT_RE.finditer(INLINE_CODE_RE.sub("", line)):
+            target = m.group(1).rstrip(".,;:")
+            if target.startswith("~/"):
+                continue  # personal file outside the repository
+            p = path.parent / target
+            if p.is_file():
+                files += with_imports(root, p, seen, depth + 1)
+    return files
 
 
 def exists_from(root: Path, md: Path, target: str) -> bool:
@@ -261,8 +323,8 @@ def check_markdown(root: Path, md: Path, cfg: dict, facts: Facts) -> list[Issue]
                 token = re.sub(r":\d+(?::\d+)?$", "", chunk.strip())  # path.py:12
                 if looks_like_path(token):
                     token = token.rstrip(".,;:")
-                    if token.startswith(CONFIG_DIR + "/"):
-                        continue  # ai-ready's own outputs (plan, baseline) may not exist yet
+                    if token.startswith((CONFIG_DIR + "/", CTX_DIR + "/")):
+                        continue  # ai-ready's and ctx-harness's outputs may not exist yet
                     if not exists_from(root, md, token) and not facts.path_suffix_exists(token):
                         add("missing-path-ref", "error" if instruction else "warning", token,
                             f"mentions '{token}' but that path does not exist", lineno)
@@ -290,7 +352,7 @@ def check_markdown(root: Path, md: Path, cfg: dict, facts: Facts) -> list[Issue]
 def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
     issues: list[Issue] = []
     found = [f for f in cfg["instruction_files"] if (root / f).is_file()]
-    if not found:
+    if not found and not uses_ctx_harness(root):
         names = " or ".join(cfg["instruction_files"])
         issues.append(Issue("instructions-file", "error", ".", f"no agent instructions file ({names})",
                             "missing"))
@@ -298,13 +360,73 @@ def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
         size = (root / f).stat().st_size
         if size == 0:
             issues.append(Issue("instructions-file", "error", f, "agent instructions file is empty", "empty"))
-        elif size > cfg["max_instructions_bytes"]:
+            continue
+        loaded = sum(p.stat().st_size for p in with_imports(root, root / f))
+        if loaded > cfg["max_instructions_bytes"]:
             issues.append(Issue(
                 "instructions-size", "warning", f,
-                f"{size} bytes; keep it under {cfg['max_instructions_bytes']} and link to deeper docs",
+                f"{loaded} bytes with imports (about {loaded // 4} tokens), re-read on every turn; "
+                f"keep it under {cfg['max_instructions_bytes']} and link to deeper docs",
                 "too-large"))
     if not any(p.is_file() and p.name.lower().split(".")[0] == "readme" for p in root.iterdir()):
         issues.append(Issue("readme", "error", ".", "no README", "missing"))
+    return issues
+
+
+def check_context_overlap(root: Path) -> list[Issue]:
+    """CLAUDE.md content that ctx-harness already injects at session start is paid twice."""
+    if not uses_ctx_harness(root):
+        return []
+    try:
+        map_text = (root / CTX_MAP).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    def norm(chunk: str) -> str:
+        return " ".join(SHELL_COMMENT_RE.sub("", chunk).split())
+
+    def paths(text: str) -> set[str]:
+        tokens = (t.strip("`'\"()[],;:.").lstrip("./").rstrip("/") for t in MAP_SPLIT_RE.split(text))
+        return {t for t in tokens if "/" in t and PATH_TOKEN_RE.match(t) and "://" not in t}
+
+    in_map = {norm(c) for _, c in code_chunks(map_text)}
+    in_map = {c for c in in_map if len(c) >= 8 and ("/" in c or " " in c)}
+    map_paths = paths(map_text)
+    issues: list[Issue] = []
+    seen: set[Path] = set()
+    for name in CLAUDE_LOADED:
+        if not (root / name).is_file():
+            continue
+        for p in with_imports(root, root / name):
+            if p.resolve() in seen or rel(root, p).startswith(CTX_DIR + "/"):
+                continue
+            seen.add(p.resolve())
+            path = rel(root, p)
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if CTX_BLOCK in text:
+                issues.append(Issue(
+                    "context-overlap", "warning", path,
+                    "contains the ctx-harness block, which its SessionStart hook already injects "
+                    "for Claude Code; keep it in AGENTS.md for other agents, not in what CLAUDE.md "
+                    "loads", "ctx-block"))
+            reported = set()
+            for lineno, chunk in code_chunks(text):
+                c = norm(chunk)
+                if c in in_map and c not in reported:
+                    reported.add(c)
+                    issues.append(Issue(
+                        "context-overlap", "warning", path,
+                        f"'{c}' is already in {CTX_MAP}, which ctx-harness injects every session; "
+                        "drop it here", "map:" + c, lineno))
+            # A guardrail may name a path the map also lists; a layout section repeats many.
+            repeated = sorted(paths("\n".join(c for _, c in code_chunks(text))) & map_paths)
+            if len(repeated) >= MAX_REPEATED_MAP_PATHS:
+                issues.append(Issue(
+                    "context-overlap", "warning", path,
+                    f"names {len(repeated)} paths that {CTX_MAP} already lists "
+                    f"({', '.join(repeated[:4])}{', ...' if len(repeated) > 4 else ''}); "
+                    "drop the layout here and keep only rules the map can't express",
+                    "map-paths"))
     return issues
 
 
@@ -352,6 +474,7 @@ def run_checks(root: Path, cfg: dict, base: str | None = None,
                if (p.suffix.lower() in (".md", ".mdx") or p.name in INSTRUCTION_NAMES)
                and not HISTORY_RE.match(p.name)]
         issues += check_doc_drift(root, cfg, base)
+        issues += check_context_overlap(root)
     else:
         mds = only
     for md in sorted(mds):

@@ -7,7 +7,8 @@ Run it once on the repository before the make-ai-ready skill and once after, the
 
   run       run every task N times against one git ref of the target repo
   prepare   run the make-ai-ready skill headless on a new branch of the target repo
-  compare   print a Markdown before/after table from two result files
+  compare   print a Markdown before/after table from two result files, or a per-arm
+            table (tokens, cost, turns vs the first file) from three or more
 
 Python 3.8+, stdlib only. Needs the `claude` CLI on PATH and credentials for it.
 """
@@ -217,7 +218,39 @@ def pct(before, after):
     return "n/a" if not before else "{:+.0f}%".format((after - before) * 100.0 / before)
 
 
+def cmd_arms(paths):
+    arms = [(os.path.splitext(os.path.basename(p))[0], load(p)) for p in paths]
+    tasks = sorted({r["task"] for _, rs in arms for r in rs})
+    lines = ["| task | " + " | ".join(name for name, _ in arms) + " |",
+             "|---" * (len(arms) + 1) + "|"]
+    totals = [[0.0, 0.0, 0.0, 0, 0] for _ in arms]
+    for task in tasks + [None]:
+        cells = []
+        for i, (_, rs) in enumerate(arms):
+            if task is None:
+                tok, cost, turns, ok, n = totals[i]
+            else:
+                rt = [r for r in rs if r["task"] == task and not r.get("error")]
+                tok = median([r["total_tokens"] for r in rt])
+                cost = median([r["cost_usd"] for r in rt])
+                turns = median([r["turns"] for r in rt])
+                ok, n = sum(r["passed"] for r in rt), len(rt)
+                for j, v in enumerate((tok, cost, turns, ok, n)):
+                    totals[i][j] += v
+            base = totals[0][0] if task is None else median(
+                [r["total_tokens"] for r in arms[0][1] if r["task"] == task and not r.get("error")])
+            change = "" if i == 0 else " ({})".format(pct(base, tok))
+            cells.append("{:,.0f}{} · ${:.3f} · {:g} turns · {}/{}".format(
+                tok, change, cost, turns, ok, n))
+        name = "**all (sum of medians)**" if task is None else task
+        lines.append("| {} | {} |".format(name, " | ".join(cells)))
+    print("Medians per task: tokens (change vs {}) · cost · turns · passed.\n".format(arms[0][0]))
+    print("\n".join(lines))
+
+
 def cmd_compare(args):
+    if args.more:
+        return cmd_arms([args.before, args.after] + args.more)
     before, after = load(args.before), load(args.after)
     tasks = sorted({r["task"] for r in before} | {r["task"] for r in after})
     metrics = [("total_tokens", "tokens"), ("cost_usd", "cost $"), ("turns", "turns"),
@@ -289,6 +322,7 @@ def main(argv=None):
     p = sub.add_parser("compare", help="Markdown table from two result files")
     p.add_argument("before")
     p.add_argument("after")
+    p.add_argument("more", nargs="*", help="further arms, for a per-arm table")
     p.set_defaults(func=cmd_compare)
 
     args = parser.parse_args(argv)

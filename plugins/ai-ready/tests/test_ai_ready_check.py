@@ -157,6 +157,48 @@ class CheckerTest(unittest.TestCase):
         git(self.root, "commit", "-qam", "change")
         self.assertEqual(self.checks(base="base"), [("doc-drift", "docs/setup.md", "src/**")])
 
+    def test_instructions_size_counts_imports(self):
+        write(self.root, "CLAUDE.md", "Rules: @docs/rules.md, contact me@example.com\n"
+                                      "`@docs/not-an-import.md`\n")
+        write(self.root, "docs/rules.md", "x" * 7000 + "\n@../src/app.py\n")
+        self.assertEqual(self.checks(), [])
+        write(self.root, "docs/rules.md", "x" * 9000 + "\n")
+        self.assertEqual(self.checks(), [("instructions-size", "CLAUDE.md", "too-large")])
+
+    def test_ctx_harness_owns_its_folder(self):
+        (self.root / "CLAUDE.md").unlink()
+        write(self.root, ".ctx/map.md", "# Repo map\nEntry: `src/app.py`\n")
+        write(self.root, ".ctx/tasks/done/T1.md", "Moved `lib/old.js`; see [x](gone.md).\n")
+        write(self.root, "docs/setup.md", "Plans go to `.ctx/tasks/active.md`.\n")
+        self.assertEqual(self.checks(), [])
+        write(self.root, ".ai-ready/config.json", "{}")
+        payload = {"cwd": str(self.root),
+                   "tool_input": {"file_path": str(self.root / ".ctx/tasks/done/T1.md")}}
+        self.assertEqual(self.run_hook("post-edit", payload)[0], 0)
+
+    def test_context_overlap_with_ctx_harness(self):
+        write(self.root, ".ctx/map.md", "Verified commands: `npm run build`, `make`\n"
+                                        "| src | app | src/app.py |\n")
+        write(self.root, "CLAUDE.md", "Build with `npm run build`; never `make`.\n"
+                                      "```sh\nnpm run build   # compiles\n```\n@AGENTS.md\n")
+        write(self.root, "AGENTS.md", "<!-- ctx-harness:begin -->\nRead .ctx/map.md\n"
+                                      "<!-- ctx-harness:end -->\n")
+        self.assertEqual(self.checks(), [
+            ("context-overlap", "AGENTS.md", "ctx-block"),
+            ("context-overlap", "CLAUDE.md", "map:npm run build"),
+        ])
+        for d in ("api", "web", "lib", "cli"):
+            write(self.root, f"pkg/{d}/x.py", "")
+        write(self.root, ".ctx/map.md", "| pkg/api | pkg/web | pkg/lib | pkg/cli/ |\n")
+        write(self.root, "CLAUDE.md", "Never edit `pkg/api/x.py` by hand.\n")
+        self.assertEqual(self.checks(), [])
+        write(self.root, "CLAUDE.md", "```\npkg/api/  API\npkg/web/  UI\npkg/lib/\n./pkg/cli\n```\n")
+        self.assertEqual(self.checks(), [("context-overlap", "CLAUDE.md", "map-paths")])
+        write(self.root, "CLAUDE.md", "Never run `npm run deploy:prod` by hand.\n")
+        write(self.root, "package.json", json.dumps({"scripts": {"build": "tsc",
+                                                                 "deploy:prod": "x"}}))
+        self.assertEqual(self.checks(), [])
+
     def test_hooks_are_inactive_without_config(self):
         write(self.root, "docs/setup.md", "[x](missing.md)\n")
         self.assertEqual(self.run_hook("stop", {"cwd": str(self.root)})[0], 0)

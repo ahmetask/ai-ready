@@ -1,6 +1,6 @@
 ---
 name: make-ai-ready
-description: Audit a repository for how well AI coding agents can work in it, clean up stale or misleading docs, write a prioritized plan to make it AI ready, and turn on the ai-ready check so it stays that way. Use when the user asks to "make this repo AI ready", "prepare the codebase for Claude/agents", "clean up stale docs", "audit our docs", "write CLAUDE.md / AGENTS.md", or asks how agent-friendly a repository is.
+description: Audit how well agents can work in a repo, fix stale docs, write a lean CLAUDE.md and a readiness plan, and turn on the ai-ready check. Use for "make this repo AI ready", doc cleanup, or writing CLAUDE.md/AGENTS.md.
 ---
 
 # Make a repository AI ready
@@ -10,12 +10,24 @@ change the code from files in the repo, and where what those files say is true. 
 worse than missing docs: an agent will trust them. The job has four phases. Do them in order and
 keep the user informed between phases.
 
+**Context costs tokens on every turn.** Whatever Claude Code loads at session start
+(`CLAUDE.md`, its `@imports`, hook injections) is re-read on every model call of every session.
+It pays for itself on orientation questions and is pure overhead on a plain edit, so the target
+is the smallest always-loaded context that still answers "where is it, how do I run it, what
+must I not do". Everything else stays on demand: linked docs, nested `CLAUDE.md` files (Claude
+Code loads `<dir>/CLAUDE.md` only when it works in `<dir>`), or ctx-harness cards.
+
 The deterministic checker lives at `${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py`
 (Python 3, stdlib only). Run it from the target repository's root. `references/criteria.md`
 defines the readiness dimensions and how to score them; read it before phase 1.
 
 ## Phase 1: Audit (read-only)
 
+0. Check for ctx-harness: if `.ctx/map.md` exists, the repo already gets a generated map
+   (layout, modules, verified commands) injected at every session start, and module cards on
+   demand. Read the map once. In this repo ai-ready owns doc accuracy and the few rules the
+   map can't express; ctx-harness owns navigation. Never edit `.ctx/` (its curator does), and
+   never copy the map's content into `CLAUDE.md`.
 1. Run the checker for a mechanical baseline:
    `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --no-baseline --format json`
    It reports broken links, docs mentioning paths that no longer exist, documented
@@ -74,10 +86,34 @@ Write `.ai-ready/plan.md` (create the directory if needed) using
 - open questions only a maintainer can answer.
 
 If the repository has no agent instructions file, draft `CLAUDE.md` now (it is the highest
-leverage item): project purpose in two lines, layout map, exact build/test/lint/run commands,
-conventions that aren't obvious from code, and pointers to deeper docs. Keep it under ~200
-lines; agents read it every session. If the repo already uses `AGENTS.md`, extend that instead
-and keep a one-line `CLAUDE.md` that says `@AGENTS.md` only if the user wants both.
+leverage item); if it has one, trim it the same way. Budget: under ~60 lines and 4 KB. Put a
+line in only if an agent could not get it from the code in one or two tool calls, or would get
+it wrong:
+
+- purpose in one line;
+- exact build/test/lint/run commands (what CI runs), one line each;
+- guardrails: commands that deploy, delete or touch shared state, and generated files not to
+  hand-edit;
+- non-obvious conventions and gotchas, one line each;
+- a short layout list of top-level directories only, with what lives where. Skip anything
+  `ls` shows.
+
+Leave out what costs every turn and helps few: directory trees, per-module detail (move it to
+a nested `<dir>/CLAUDE.md`, which loads only when an agent works there), prose explanations,
+lists of every doc (link the one or two that matter), and anything a linked doc already says.
+Don't `@import` long docs; a plain link is read only when needed.
+
+**With ctx-harness** (`.ctx/map.md` exists): the map already carries the layout, modules and
+verified commands, so `CLAUDE.md` keeps only guardrails, gotchas and commands the map lacks,
+often under 20 lines, and it is fine to have none. No layout section, no module notes (those
+belong in cards; list facts the curator should add in the plan, or append one line each to
+`.ctx/tasks/notes.md`), no nested `CLAUDE.md` files, and no `@import` of a file holding the
+`ctx-harness:begin` block. The checker's `context-overlap` warning flags lines repeated from
+the map.
+
+If the repo already uses `AGENTS.md`, extend that instead and keep a one-line `CLAUDE.md` that
+says `@AGENTS.md` only if the user wants both (with ctx-harness, keep its generated block out
+of what `CLAUDE.md` imports).
 
 ## Phase 4: Keep it AI ready
 
@@ -86,10 +122,12 @@ Turn on enforcement so future changes can't silently regress:
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --init` writes
    `.ai-ready/config.json`. Adjust it:
    - `instruction_files`: which files count as agent instructions;
+   - `max_instructions_bytes` (default 8000, imports included): leave it unless the user asks;
    - `ignore`: globs for generated or vendored docs, and for confirmed false positives;
    - `doc_watch`: rules tying fragile docs to the code they describe, e.g.
      `{"paths": ["src/api/**"], "docs": ["docs/api.md"]}` (`*` also matches `/`);
-     a change to those paths without touching the doc is reported as `doc-drift`;
+     a change to those paths without touching the doc is reported as `doc-drift`. Don't
+     watch `.ctx/`; ctx-harness tracks its own freshness;
    - `fail_on` (`error` or `warning`) and `min_score`.
 2. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --update-baseline` records
    whatever issues remain as accepted, so only *new* issues fail. The plan's backlog is how the

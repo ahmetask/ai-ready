@@ -11,8 +11,10 @@ Score each dimension 0-3 and cite one line of evidence (a file, a command you ra
 
 ## Dimensions
 
-1. **Agent instructions.** `CLAUDE.md` / `AGENTS.md` exists, is accurate, short enough to read
-   every session (aim for under ~200 lines), and points to deeper docs instead of copying them.
+1. **Agent instructions.** `CLAUDE.md` / `AGENTS.md` exists, is accurate, short enough to pay
+   for on every turn (under ~60 lines and 4 KB, imports included), and points to deeper docs
+   instead of copying them. With ctx-harness, its injected map counts here: a 3 is a map plus a
+   `CLAUDE.md` that repeats none of it (or no `CLAUDE.md` at all).
 2. **Build, test, lint, run commands.** Documented exactly, match what CI runs, and work on a
    clean checkout. A 3 means a single obvious command for each.
 3. **Docs accuracy.** No broken links, no references to removed files, commands, env vars or

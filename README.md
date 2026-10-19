@@ -26,12 +26,13 @@ Then, in the repository you want to prepare, ask Claude to "make this repo AI re
 | Check | Severity | What it catches |
 |---|---|---|
 | `instructions-file` | error | No `CLAUDE.md` / `AGENTS.md` (configurable), or it is empty |
-| `instructions-size` | warning | Agent instructions too large to read every session |
+| `instructions-size` | warning | Agent instructions, with their `@imports`, over `max_instructions_bytes` (default 8000, about 2k tokens). They are re-read on every turn |
 | `readme` | error | No README |
 | `broken-link` | error | Relative Markdown links to files that don't exist |
 | `missing-path-ref` | error in agent instructions, warning elsewhere | `` `inline/code/paths.ext` `` that don't exist (renamed or deleted code) |
 | `missing-command` | error in agent instructions, warning elsewhere | Documented `npm/pnpm/yarn/bun run <x>` or `make <x>` with no such script or target |
 | `doc-drift` | configurable | Code covered by a `doc_watch` rule changed without its docs |
+| `context-overlap` | warning | With [ctx-harness](#using-it-with-ctx-harness): `CLAUDE.md` (or a file it imports) repeats commands or a layout (4+ paths) from `.ctx/map.md`, or carries the `ctx-harness` block the hook already injects |
 
 It prints a readiness score (100, minus 10 per error and 2 per warning) and exits non-zero when
 there are **new** failing issues. Pre-existing issues you accept when adopting the tool are kept
@@ -50,7 +51,7 @@ this file.
 ```json
 {
   "instruction_files": ["CLAUDE.md", "AGENTS.md"],
-  "max_instructions_bytes": 40000,
+  "max_instructions_bytes": 8000,
   "ignore": ["docs/generated/**"],
   "fail_on": "error",
   "min_score": 0,
@@ -98,6 +99,32 @@ repos:
     hooks:
       - id: ai-ready
 ```
+
+## Using it with ctx-harness
+
+[ctx-harness](https://github.com/ahmetask/ctx-harness) injects a generated repo map
+(`.ctx/map.md`: layout, modules, verified commands) at every session start and serves module
+cards on demand. Everything loaded at session start is paid for again on every turn, so the two
+plugins split the work instead of both describing the repository:
+
+| | ctx-harness | ai-ready |
+|---|---|---|
+| Layout, modules, commands | `.ctx/map.md`, injected | not repeated in `CLAUDE.md` |
+| Per-module detail | cards, read on demand | none (nested `CLAUDE.md` only without ctx-harness) |
+| Guardrails and gotchas the map can't express | | a short `CLAUDE.md`, or none |
+| Freshness | `.ctx/` (`ctxh check`, curate) | every other doc (this check) |
+
+When `.ctx/map.md` exists, the check:
+
+- leaves `.ctx/` to `ctxh check` (task archives there mention old paths on purpose) and doesn't
+  flag `.ctx/...` paths that the harness creates later;
+- accepts the map as agent instructions, so a missing `CLAUDE.md` is not an error;
+- warns with `context-overlap` when `CLAUDE.md` repeats the map's commands or layout, or imports the ctx-harness
+  block, which `ctxh init --target agents-md` writes to `AGENTS.md` for other agents.
+
+The `make-ai-ready` skill detects the map too: it writes `CLAUDE.md` with only what the map
+lacks, never edits `.ctx/`, and passes module facts to the ctx-harness curator instead of
+writing them into `CLAUDE.md`. Measured effect: [benchmark/results/myagent-2026-10-19-ctx](benchmark/results/myagent-2026-10-19-ctx/README.md).
 
 ## Repository layout
 

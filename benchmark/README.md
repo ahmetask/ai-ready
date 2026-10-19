@@ -37,7 +37,16 @@ python3 benchmark/run_benchmark.py compare results/before.jsonl results/after.js
 ```
 
 Common flags: `--model` (default `sonnet`), `--jobs` (parallel sessions, default 3),
-`--only <task ids>`, `--max-budget-usd` per session.
+`--only <task ids>`, `--max-budget-usd` per session, `--plugin-dir` (load a plugin, such as
+ctx-harness, in every session).
+
+`compare` with three or more result files prints one column per arm (named after the file),
+with token changes against the first, e.g.
+`compare before.jsonl lean.jsonl ctx.jsonl ctx-lean.jsonl`.
+
+Results so far: [myagent-2026-10-19](results/myagent-2026-10-19/README.md) (before and after
+the skill) and [myagent-2026-10-19-ctx](results/myagent-2026-10-19-ctx/README.md) (lean
+`CLAUDE.md`, and ai-ready together with ctx-harness).
 
 In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual dispatch)
 runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
