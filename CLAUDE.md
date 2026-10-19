@@ -1,31 +1,32 @@
 # ai-ready
 
-Claude Code plugin (plus GitHub Action and pre-commit hook) that makes repositories AI ready and
-checks that changes keep them that way. See `README.md` for user-facing docs.
-
-## Layout
-
-- `plugins/ai-ready/scripts/ai_ready_check.py`: the checker. Single file, Python 3.8+, stdlib
-  only; keep it that way so it runs anywhere without installs.
-- `plugins/ai-ready/skills/make-ai-ready/SKILL.md`: the audit / cleanup / plan skill, with
-  `references/criteria.md` and `references/plan-template.md`.
-- `plugins/ai-ready/hooks/hooks.json`, `plugins/ai-ready/commands/check.md`: Claude Code wiring.
-- `action.yml`, `.pre-commit-hooks.yaml`: CI integrations; both call the checker by path.
-- `.ai-ready/config.json`, `.ai-ready/components.json`: this repo dogfoods its own check and
-  component map.
-- `benchmark/`: before/after token benchmark of the skill on a target repo (`run_benchmark.py`,
-  tasks in `benchmark/tasks/`, manual workflow `.github/workflows/benchmark.yml`). Same stdlib-only rule.
+Claude Code plugin that makes repositories AI ready (component map, pruned docs, lean
+`CLAUDE.md`), plus a stdlib checker that keeps them that way in hooks, CI and pre-commit.
 
 ## Commands
 
-- Tests: `python3 -m unittest discover -s plugins/ai-ready/tests -v`
-- Self-check: `python3 plugins/ai-ready/scripts/ai_ready_check.py`
+- Test: `python3 -m unittest discover -s plugins/ai-ready/tests`
+- Self-check, as CI runs it: `python3 plugins/ai-ready/scripts/ai_ready_check.py --base origin/main`
 - Validate the plugin: `claude plugin validate plugins/ai-ready`
+- Overview of the repo: `python3 plugins/ai-ready/scripts/ai_ready_check.py --explain`
 
-## Conventions
+## Guardrails
 
-- Every check has a stable `key` without line numbers; the baseline fingerprint is
-  `check|file|key`, so changing a key format invalidates users' baselines.
-- Hooks must stay silent (exit 0) in repositories without `.ai-ready/config.json`, and the Stop
-  hook must respect `stop_hook_active` so it never loops.
-- When adding a check, add it to the table in `README.md` and a test in `plugins/ai-ready/tests/`.
+- `benchmark/run_benchmark.py run` and `prepare` start paid Claude sessions; run them only when
+  asked. `compare` is offline.
+- `benchmark/results/` holds recorded measurements; never edit them, add a new folder instead.
+- All Python is stdlib-only and 3.8+, so the checker runs anywhere without installs.
+
+## Gotchas
+
+- `action.yml` and `.pre-commit-hooks.yaml` call the checker by path; moving it breaks users.
+- Changing the skill, a check, a command or a hook usually means updating `README.md` too.
+
+## Layout
+
+- `plugins/ai-ready/`: the plugin (checker, skill, commands, hooks, tests); see `plugins/CLAUDE.md`
+- `benchmark/`: token benchmark of the skill; see its `CLAUDE.md`
+- `action.yml`, `.pre-commit-hooks.yaml`, `.github/workflows/`: CI integrations
+- `.ai-ready/`: this repo's own component map, config, baseline and plan
+
+Architecture: [docs/architecture.md](docs/architecture.md).

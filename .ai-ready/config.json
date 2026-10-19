@@ -20,6 +20,27 @@
       ],
       "message": "the checker changed; update README.md if its flags or checks changed",
       "severity": "warning"
+    },
+    {
+      "paths": [
+        ".ai-ready/components.json"
+      ],
+      "docs": [
+        "docs/architecture.md"
+      ],
+      "severity": "warning",
+      "message": "the component map changed; update the table in docs/architecture.md"
+    },
+    {
+      "paths": [
+        "plugins/ai-ready/commands/*",
+        "plugins/ai-ready/hooks/*"
+      ],
+      "docs": [
+        "README.md"
+      ],
+      "severity": "warning",
+      "message": "a command or hook changed; update README.md if its behaviour did"
     }
   ]
 }

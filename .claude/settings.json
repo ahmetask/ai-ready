@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "ai-ready": {
+      "source": { "source": "github", "repo": "ahmetask/ai-ready" }
+    }
+  },
+  "enabledPlugins": {
+    "ai-ready@ai-ready": true
+  }
+}

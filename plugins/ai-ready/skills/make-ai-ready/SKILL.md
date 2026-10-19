@@ -15,11 +15,11 @@ whenever an agent reads them.
 
 **Always-loaded context is paid for on every turn.** `CLAUDE.md` and its `@imports` are
 re-read on every model call of every session. They pay for themselves on orientation
-questions and are pure overhead on a plain edit. In a benchmark on a real repo, a ~40-line
-`CLAUDE.md` (commands, guardrails, gotchas, with details in linked docs) cut tokens by 37%
-and cost by 28% across tasks. A longer `CLAUDE.md` cut tokens by only 26%, and it made a
-simple edit task 48% more expensive. So aim for the smallest `CLAUDE.md` that still answers
-three questions: where is it, how do I run it, and what must I not do.
+questions and are pure overhead on a plain edit. In a benchmark on a real repo, a long
+`CLAUDE.md` made a plain edit task 48% more expensive. A 41-line `CLAUDE.md`, with
+per-component `CLAUDE.md` files loaded on demand, cut that overhead to 7% and cut tokens by
+29% across all the tasks. So aim for the smallest `CLAUDE.md` that still answers three
+questions: where is it, how do I run it, and what must I not do.
 
 The deterministic checker is `${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py` (Python 3,
 stdlib only). Run it from the target repository's root. `references/criteria.md` defines the
