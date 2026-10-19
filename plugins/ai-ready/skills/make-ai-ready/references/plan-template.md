@@ -13,19 +13,21 @@ _Generated <date> by the ai-ready skill. Checker score: <before>/100 to <after>/
 | Agent instructions | | | |
 | Build/test/lint/run commands | | | |
 | Docs accuracy | | | |
+| Doc structure | | | |
 | Architecture and navigation | | | |
 | Environment setup | | | |
 | Feedback loops | | | |
 | Conventions | | | |
 | Safety rails | | | |
 | Staying ready | | | |
-| **Total (0-27)** | | | |
+| **Total (0-30)** | | | |
 
 ## Cleanup done
 
 - Fixed: `<file>`: <what and why>
 - Merged: `<file>` into `<file>`
 - Deleted: `<file>`: <why it was obsolete>
+- `CLAUDE.md`: <lines/bytes before> to <after>; moved <what> to <where>
 
 ## Backlog
 

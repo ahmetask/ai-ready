@@ -2,12 +2,17 @@
 
 A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
 
-- **`make-ai-ready` skill**: audits the repository the way an agent experiences it, cleans up
-  stale or misleading docs (fix, merge, delete with your go-ahead), drafts `CLAUDE.md` if there
-  is none, and writes a prioritized readiness plan to `.ai-ready/plan.md`.
+- **`make-ai-ready` skill**: makes the repository clean, well structured and compact. It prunes
+  stale docs (deleting only with your go-ahead), merges duplicates into one place per topic,
+  writes or trims a lean `CLAUDE.md`, and writes a prioritized plan to `.ai-ready/plan.md`.
 - **ai-ready check**: a fast, dependency-free checker that fails when a change makes the repo
   less AI ready. It runs as Claude Code hooks, as a slash command, in GitHub Actions, and in
   pre-commit.
+
+Why lean: `CLAUDE.md` is re-read on every turn. In a benchmark on a real repository, a
+~40-line `CLAUDE.md` (commands, guardrails and gotchas, with details in linked docs) cut tokens
+by 37% and cost by 28%. A longer `CLAUDE.md` cut tokens by only 26%, and it made a plain edit
+task 48% more expensive. The check keeps `CLAUDE.md` within a budget and stops it from growing.
 
 ## Install
 
@@ -26,7 +31,8 @@ Then, in the repository you want to prepare, ask Claude to "make this repo AI re
 | Check | Severity | What it catches |
 |---|---|---|
 | `instructions-file` | error | No `CLAUDE.md` / `AGENTS.md` (configurable), or it is empty |
-| `instructions-size` | warning | Agent instructions too large to read every session |
+| `instructions-size` | error | `CLAUDE.md` / `AGENTS.md`, with their `@imports`, over budget (default 60 lines / 4000 bytes). They are re-read on every turn |
+| `instructions-growth` | error | An over-budget instructions file grew past the size recorded in the baseline. It may shrink, never grow |
 | `readme` | error | No README |
 | `broken-link` | error | Relative Markdown links to files that don't exist |
 | `missing-path-ref` | error in agent instructions, warning elsewhere | `` `inline/code/paths.ext` `` that don't exist (renamed or deleted code) |
@@ -50,7 +56,8 @@ this file.
 ```json
 {
   "instruction_files": ["CLAUDE.md", "AGENTS.md"],
-  "max_instructions_bytes": 40000,
+  "max_instructions_lines": 60,
+  "max_instructions_bytes": 4000,
   "ignore": ["docs/generated/**"],
   "fail_on": "error",
   "min_score": 0,
@@ -71,8 +78,8 @@ this file.
 
 **In Claude Code** (automatic once the plugin is installed and the repo has a config):
 
-- after Claude edits a Markdown file, the check runs on that file and reports new issues back
-  to Claude right away;
+- after Claude edits a Markdown file, the check runs on that file (and, for `CLAUDE.md`,
+  against its budget) and reports new issues back to Claude right away;
 - before Claude finishes a turn, the full check runs on the working tree; if it finds new
   issues, Claude is asked once to fix them. Set `AI_READY_DISABLE=1` to turn the hooks off.
 - `/ai-ready:check` runs the check on demand and fixes what it finds.

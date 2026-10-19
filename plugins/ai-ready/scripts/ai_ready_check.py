@@ -4,7 +4,9 @@
 Deterministic, stdlib-only checks that an agent (or a human) can rely on:
 
   instructions-file   an agent instructions file (CLAUDE.md / AGENTS.md) exists
-  instructions-size   agent instructions stay small enough to be read every session
+  instructions-size   agent instructions (with their @imports) stay within the line and byte
+                      budget: they are re-read on every turn of every session
+  instructions-growth an over-budget instructions file grew past its size in the baseline
   readme              a README exists
   broken-link         relative markdown links point at files that exist
   missing-path-ref    `inline/code/paths.ext` in docs point at files that exist
@@ -39,7 +41,8 @@ BASELINE_FILE = f"{CONFIG_DIR}/baseline.json"
 
 DEFAULT_CONFIG = {
     "instruction_files": ["CLAUDE.md", "AGENTS.md"],
-    "max_instructions_bytes": 40000,
+    "max_instructions_lines": 60,
+    "max_instructions_bytes": 4000,
     "ignore": [],
     "fail_on": "error",
     "min_score": 0,
@@ -55,6 +58,7 @@ SKIP_DIRS = {
 HISTORY_RE = re.compile(r"^(changelog|changes|history|news|releases?|release[-_]notes)(\.\w+)?$", re.I)
 INSTRUCTION_NAMES = {"CLAUDE.md", "AGENTS.md", "copilot-instructions.md", ".cursorrules"}
 
+IMPORT_RE = re.compile(r"(?:^|\s)@((?:\.{1,2}/)?[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]+)*)")
 LINK_RE = re.compile(r"!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+[\"'][^)]*[\"'])?\s*\)")
 REF_LINK_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$")
 INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1")
@@ -148,6 +152,41 @@ def split_markdown(text: str):
                 yield i, line, True
                 continue
         yield i, line, fence is not None
+
+
+def with_imports(path: Path, seen: set | None = None, depth: int = 0) -> list[Path]:
+    """`path` plus the files it pulls in with `@file` imports, as Claude Code loads them."""
+    seen = set() if seen is None else seen
+    try:
+        resolved = path.resolve()
+        path.read_bytes()
+    except OSError:
+        return []
+    if resolved in seen:
+        return []
+    seen.add(resolved)
+    files = [path]
+    if depth >= 5:
+        return files
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for _, line, in_fence in split_markdown(text):
+        if in_fence:
+            continue
+        for m in IMPORT_RE.finditer(INLINE_CODE_RE.sub("", line)):
+            p = path.parent / m.group(1).rstrip(".,;:")
+            if p.is_file():
+                files += with_imports(p, seen, depth + 1)
+    return files
+
+
+def footprint(path: Path) -> tuple[int, int]:
+    """(bytes, lines) an instructions file costs per turn, imports included."""
+    size = lines = 0
+    for p in with_imports(path):
+        data = p.read_bytes()
+        size += len(data)
+        lines += data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+    return size, lines
 
 
 def exists_from(root: Path, md: Path, target: str) -> bool:
@@ -287,6 +326,28 @@ def check_markdown(root: Path, md: Path, cfg: dict, facts: Facts) -> list[Issue]
     return issues
 
 
+def check_instructions(root: Path, cfg: dict, f: str) -> list[Issue]:
+    """Keep an instructions file lean: everything in it is paid for on every turn."""
+    size, lines = footprint(root / f)
+    if size == 0:
+        return [Issue("instructions-file", "error", f, "agent instructions file is empty", "empty")]
+    max_lines, max_bytes = int(cfg["max_instructions_lines"]), int(cfg["max_instructions_bytes"])
+    if lines <= max_lines and size <= max_bytes:
+        return []
+    issues = [Issue(
+        "instructions-size", "error", f,
+        f"{lines} lines / {size} bytes with imports (budget {max_lines} lines / {max_bytes} bytes), "
+        "re-read on every turn; keep commands, guardrails and gotchas here and move the rest to "
+        "docs linked from it", "too-large")]
+    recorded = load_sizes(root).get(f)
+    if recorded and (lines > recorded.get("lines", lines) or size > recorded.get("bytes", size)):
+        issues.append(Issue(
+            "instructions-growth", "error", f,
+            f"grew from {recorded.get('lines')} lines / {recorded.get('bytes')} bytes in the baseline "
+            f"to {lines} / {size} while over budget; trim it instead of adding to it", "grew"))
+    return issues
+
+
 def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
     issues: list[Issue] = []
     found = [f for f in cfg["instruction_files"] if (root / f).is_file()]
@@ -295,14 +356,7 @@ def check_repo_files(root: Path, cfg: dict) -> list[Issue]:
         issues.append(Issue("instructions-file", "error", ".", f"no agent instructions file ({names})",
                             "missing"))
     for f in found:
-        size = (root / f).stat().st_size
-        if size == 0:
-            issues.append(Issue("instructions-file", "error", f, "agent instructions file is empty", "empty"))
-        elif size > cfg["max_instructions_bytes"]:
-            issues.append(Issue(
-                "instructions-size", "warning", f,
-                f"{size} bytes; keep it under {cfg['max_instructions_bytes']} and link to deeper docs",
-                "too-large"))
+        issues += check_instructions(root, cfg, f)
     if not any(p.is_file() and p.name.lower().split(".")[0] == "readme" for p in root.iterdir()):
         issues.append(Issue("readme", "error", ".", "no README", "missing"))
     return issues
@@ -372,11 +426,24 @@ def load_baseline(root: Path) -> set[str]:
     return set(data.get("accepted", [])) if isinstance(data, dict) else set()
 
 
-def write_baseline(root: Path, issues: list[Issue]) -> None:
+def load_sizes(root: Path) -> dict:
+    data = load_json(root / BASELINE_FILE, {})
+    sizes = data.get("instruction_sizes") if isinstance(data, dict) else None
+    return sizes if isinstance(sizes, dict) else {}
+
+
+def write_baseline(root: Path, cfg: dict, issues: list[Issue]) -> None:
     (root / CONFIG_DIR).mkdir(exist_ok=True)
+    sizes = {}
+    for f in cfg["instruction_files"]:
+        if (root / f).is_file():
+            size, lines = footprint(root / f)
+            sizes[f] = {"lines": lines, "bytes": size}
     data = {"comment": "Known issues accepted when ai-ready was adopted. Fix them and re-run "
-                       "--update-baseline to shrink this list; never add to it by hand.",
-            "accepted": sorted({i.fingerprint for i in issues})}
+                       "--update-baseline to shrink this list; never add to it by hand. "
+                       "instruction_sizes caps over-budget instruction files at their current size.",
+            "accepted": sorted({i.fingerprint for i in issues if i.check != "instructions-growth"}),
+            "instruction_sizes": sizes}
     (root / BASELINE_FILE).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -428,6 +495,8 @@ def hook(mode: str) -> int:
                 or not (p.suffix.lower() in (".md", ".mdx") or p.name in INSTRUCTION_NAMES)):
             return 0
         issues = run_checks(root, cfg, only=[p.resolve()])
+        if r in cfg["instruction_files"]:
+            issues += check_instructions(root, cfg, r)
 
     new = [i for i in failing(issues, cfg) if i.fingerprint not in baseline]
     if not new:
@@ -473,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(root)
     issues = run_checks(root, cfg, base=args.base)
     if args.update_baseline:
-        write_baseline(root, issues)
+        write_baseline(root, cfg, issues)
         print(f"baseline updated: {len(issues)} accepted issue(s) in {BASELINE_FILE}")
         return 0
 

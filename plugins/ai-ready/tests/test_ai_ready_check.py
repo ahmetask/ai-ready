@@ -157,6 +157,50 @@ class CheckerTest(unittest.TestCase):
         git(self.root, "commit", "-qam", "change")
         self.assertEqual(self.checks(base="base"), [("doc-drift", "docs/setup.md", "src/**")])
 
+    def test_instructions_budget_counts_lines_bytes_and_imports(self):
+        write(self.root, "CLAUDE.md", "line\n" * 60)
+        self.assertEqual(self.checks(), [])
+        write(self.root, "CLAUDE.md", "line\n" * 61)
+        self.assertEqual(self.checks(), [("instructions-size", "CLAUDE.md", "too-large")])
+        write(self.root, "CLAUDE.md", "x" * 4001)
+        self.assertEqual(self.checks(), [("instructions-size", "CLAUDE.md", "too-large")])
+        write(self.root, "CLAUDE.md", "Rules: @docs/rules.md, mail me@example.com, `@docs/no.md`\n")
+        write(self.root, "docs/rules.md", "rule\n" * 50 + "@../CLAUDE.md\n")
+        self.assertEqual(self.checks(), [])
+        write(self.root, "docs/no.md", "x\n" * 100)
+        self.assertEqual(self.checks(), [])
+        write(self.root, "docs/rules.md", "rule\n" * 60)
+        [issue] = self.issues()
+        self.assertEqual((issue.check, issue.severity), ("instructions-size", "error"))
+        self.assertIn("61 lines", issue.message)
+
+    def test_baselined_instructions_cannot_grow(self):
+        write(self.root, "CLAUDE.md", "line\n" * 80)
+        self.assertEqual(self.run_main()[0], 1)
+        self.run_main("--update-baseline")
+        sizes = json.loads((self.root / ".ai-ready/baseline.json").read_text())["instruction_sizes"]
+        self.assertEqual(sizes, {"CLAUDE.md": {"lines": 80, "bytes": 400}})
+        self.assertEqual(self.run_main()[0], 0)
+        write(self.root, "CLAUDE.md", "line\n" * 70)
+        self.assertEqual(self.run_main()[0], 0)  # shrinking is always fine
+        write(self.root, "CLAUDE.md", "line\n" * 81)
+        code, out = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("instructions-growth", out)
+        self.run_main("--update-baseline")
+        accepted = json.loads((self.root / ".ai-ready/baseline.json").read_text())["accepted"]
+        self.assertNotIn("instructions-growth|CLAUDE.md|grew", accepted)
+
+    def test_post_edit_hook_checks_instructions_budget(self):
+        write(self.root, ".ai-ready/config.json", "{}")
+        payload = {"cwd": str(self.root),
+                   "tool_input": {"file_path": str(self.root / "CLAUDE.md")}}
+        self.assertEqual(self.run_hook("post-edit", payload)[0], 0)
+        write(self.root, "CLAUDE.md", "line\n" * 61)
+        code, err = self.run_hook("post-edit", payload)
+        self.assertEqual(code, 2)
+        self.assertIn("instructions-size", err)
+
     def test_hooks_are_inactive_without_config(self):
         write(self.root, "docs/setup.md", "[x](missing.md)\n")
         self.assertEqual(self.run_hook("stop", {"cwd": str(self.root)})[0], 0)

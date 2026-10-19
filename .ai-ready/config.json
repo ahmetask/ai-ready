@@ -3,7 +3,8 @@
     "CLAUDE.md",
     "AGENTS.md"
   ],
-  "max_instructions_bytes": 40000,
+  "max_instructions_lines": 60,
+  "max_instructions_bytes": 4000,
   "ignore": [
     "plugins/ai-ready/skills/**"
   ],
