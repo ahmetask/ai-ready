@@ -2,7 +2,7 @@
 
 - Target: [ahmetask/myagent](https://github.com/ahmetask/myagent)
 - Before: `main` at `399c7e8` (no `CLAUDE.md`)
-- After: branch `claude/ai-ready-benchmark` at `89b1cb6`, made by
+- After: branch `claude/ai-ready-benchmark` at `b32a61e`, made by
   `run_benchmark.py prepare` (the `make-ai-ready` skill, headless, Opus): new `CLAUDE.md`,
   `.ai-ready/` config, baseline and plan, stale-doc fixes in `README.md`, `wiki.md`, `DEPLOY.md`
   and `.env.deploy.example`. Skill readiness score 10/27 before, 17/27 after.
