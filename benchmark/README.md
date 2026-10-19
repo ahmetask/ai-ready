@@ -1,0 +1,51 @@
+# Token benchmark
+
+Measures whether making a repository AI ready with the `make-ai-ready` skill makes Claude Code
+cheaper to work in. The same intents run in fresh headless sessions against the repository
+before and after the skill, and the token usage is compared.
+
+Each session:
+
+- starts in a throwaway copy of one git ref (`git archive`, so no other session's edits leak in);
+- is a cold `claude -p --output-format json` run with no user settings, no MCP servers and no
+  session persistence, so only the repository differs between phases;
+- may use `Read`, `Grep`, `Glob`, `Edit` and `Write` (no shell), with edits auto-accepted;
+- is graded roughly: every `expect` string must appear in the answer and every `expect_changed`
+  glob must match a changed file. That only guards against a cheap run that got it wrong.
+
+Tokens are summed over every model the session used and include cache reads and writes.
+Results vary run to run, so each task runs several times and the comparison uses medians.
+
+## Run it
+
+```
+# 1. baseline on the untouched repository
+python3 benchmark/run_benchmark.py run --repo ../myagent --ref main --label before \
+    --tasks benchmark/tasks/myagent.json --repeat 3 --out results/before.jsonl
+
+# 2. make it AI ready: runs /ai-ready:make-ai-ready headless and commits on a new branch
+#    (review the diff before you trust it, or do this step interactively instead)
+python3 benchmark/run_benchmark.py prepare --repo ../myagent --base main \
+    --branch claude/ai-ready-benchmark --plugin-dir plugins/ai-ready --out results/prepare.jsonl
+
+# 3. the same intents on the AI-ready branch
+python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark \
+    --label after --tasks benchmark/tasks/myagent.json --repeat 3 --out results/after.jsonl
+
+# 4. compare
+python3 benchmark/run_benchmark.py compare results/before.jsonl results/after.jsonl
+```
+
+Common flags: `--model` (default `sonnet`), `--jobs` (parallel sessions, default 3),
+`--only <task ids>`, `--max-budget-usd` per session.
+
+In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual dispatch)
+runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
+`TARGET_REPO_TOKEN` secret when the target repository is private.
+
+## Tasks
+
+`tasks/<repo>.json` holds a list of `{id, prompt, expect, expect_changed}`. Pick intents a
+developer would really ask cold: where to make a change, how something works, which commands
+to run, plus at least one real edit. Keep answers short in the prompt so output length doesn't
+dominate the numbers.

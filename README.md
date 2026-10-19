@@ -109,6 +109,7 @@ repos:
   - `scripts/ai_ready_check.py`: the checker (Python 3.8+, stdlib only)
   - `tests/`: unit tests
 - `action.yml`, `.pre-commit-hooks.yaml`: CI and pre-commit integrations
+- `benchmark/`: before/after token benchmark for the skill; see [benchmark/README.md](benchmark/README.md)
 
 ## Development
 
