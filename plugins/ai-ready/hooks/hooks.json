@@ -1,0 +1,28 @@
+{
+  "description": "Keep an opted-in repository AI ready: flag broken doc references as docs are edited, and block finishing a turn that leaves new ai-ready issues behind. Inactive unless the repository has .ai-ready/config.json.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py\" --hook post-edit",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py\" --hook stop",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

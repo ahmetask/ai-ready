@@ -1,0 +1,24 @@
+{
+  "instruction_files": [
+    "CLAUDE.md",
+    "AGENTS.md"
+  ],
+  "max_instructions_bytes": 40000,
+  "ignore": [
+    "plugins/ai-ready/skills/**"
+  ],
+  "fail_on": "error",
+  "min_score": 90,
+  "doc_watch": [
+    {
+      "paths": [
+        "plugins/ai-ready/scripts/*"
+      ],
+      "docs": [
+        "README.md"
+      ],
+      "message": "the checker changed; update README.md if its flags or checks changed",
+      "severity": "warning"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# AI readiness criteria
+
+Score each dimension 0-3 and cite one line of evidence (a file, a command you ran, a grep).
+
+| Score | Meaning |
+|---|---|
+| 0 | Missing or actively misleading |
+| 1 | Present but stale, partial, or hard to find |
+| 2 | Accurate and findable, with small gaps |
+| 3 | Accurate, concise, and checked automatically |
+
+## Dimensions
+
+1. **Agent instructions.** `CLAUDE.md` / `AGENTS.md` exists, is accurate, short enough to read
+   every session (aim for under ~200 lines), and points to deeper docs instead of copying them.
+2. **Build, test, lint, run commands.** Documented exactly, match what CI runs, and work on a
+   clean checkout. A 3 means a single obvious command for each.
+3. **Docs accuracy.** No broken links, no references to removed files, commands, env vars or
+   modules; no contradictions between docs. The `ai_ready_check.py` findings feed this score.
+4. **Architecture and navigation.** A short overview of the main components and where they
+   live; consistent layout; no single source files so large an agent can't hold them in context
+   (flag files over ~1,500 lines).
+5. **Environment setup.** Reproducible: pinned toolchain versions, lockfiles committed,
+   `.env.example` or equivalent for required config, services startable locally (compose,
+   devcontainer) or mocked.
+6. **Feedback loops.** Fast tests an agent can run offline, type checking / linting, and CI that
+   reports clearly. Agents fix what they can measure.
+7. **Conventions.** Non-obvious rules (naming, error handling, where new code goes, how to add a
+   migration) are written down once.
+8. **Safety rails.** Secrets are not in the repo, destructive scripts are clearly labelled,
+   and generated or vendored code is marked so agents don't hand-edit it.
+9. **Staying ready.** The ai-ready check runs in CI or pre-commit, with `doc_watch` rules for docs
+   that track fast-moving code.
+
+Overall readiness is the sum (0-27). Rough bands: 0-9 not ready, 10-18 workable, 19-27 ready.

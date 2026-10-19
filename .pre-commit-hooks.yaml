@@ -1,0 +1,7 @@
+- id: ai-ready
+  name: ai-ready check
+  description: Fail when a change leaves the repository less AI ready.
+  entry: plugins/ai-ready/scripts/ai_ready_check.py
+  language: script
+  pass_filenames: false
+  always_run: true

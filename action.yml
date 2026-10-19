@@ -1,0 +1,29 @@
+name: ai-ready check
+description: Fail when a change leaves the repository less AI ready (stale doc references, missing agent instructions, doc drift).
+branding:
+  icon: check-circle
+  color: purple
+inputs:
+  base:
+    description: Git ref to diff against for doc-drift rules. Defaults to the pull request base branch.
+    required: false
+    default: ""
+  args:
+    description: Extra arguments for ai_ready_check.py (e.g. --no-baseline).
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        AI_READY_BASE: ${{ inputs.base }}
+        AI_READY_ARGS: ${{ inputs.args }}
+        PR_BASE: ${{ github.base_ref }}
+      run: |
+        base="${AI_READY_BASE:-${PR_BASE:+origin/$PR_BASE}}"
+        if [ -n "$base" ]; then
+          git fetch --no-tags --depth=200 origin "${base#origin/}" >/dev/null 2>&1 || true
+          set -- --base "$base"
+        fi
+        python3 "$GITHUB_ACTION_PATH/plugins/ai-ready/scripts/ai_ready_check.py" "$@" $AI_READY_ARGS
