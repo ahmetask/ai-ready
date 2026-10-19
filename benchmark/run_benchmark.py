@@ -22,6 +22,7 @@ import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 # Variables that tie a nested `claude` to the session that launched it. Dropping them makes
@@ -43,17 +44,20 @@ TASK_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write"]
 
 PREPARE_PROMPT = (
     "/ai-ready:make-ai-ready Make this repository AI ready. You are running "
-    "non-interactively and nobody can answer questions: do all four phases without stopping, "
-    "apply the fix and merge cleanups, do not delete any file (list proposed deletions in the "
-    "plan instead), draft CLAUDE.md, write .ai-ready/plan.md, and turn on the check with "
-    "--init and --update-baseline. Do not set up CI. Finish with a three-line summary."
+    "non-interactively and nobody can answer questions or confirm anything: do every phase "
+    "without stopping and treat your own component map as confirmed. Apply the fix and merge "
+    "cleanups, but do not delete any file (list proposed deletions in the plan instead). Never "
+    "deploy or touch remote resources. Write .ai-ready/components.json, the lean CLAUDE.md and "
+    ".ai-ready/plan.md, and turn on the check with --init and --update-baseline. Do not set up "
+    "CI. Finish with a three-line summary."
 )
+
+# `git worktree add/remove` on one repository from several threads races on its lock files.
+WORKTREE_LOCK = threading.Lock()
 
 
 def clean_env():
-    env = {k: v for k, v in os.environ.items() if k not in PARENT_SESSION_ENV}
-    env["AI_READY_DISABLE"] = env.get("AI_READY_DISABLE", "1")
-    return env
+    return {k: v for k, v in os.environ.items() if k not in PARENT_SESSION_ENV}
 
 
 def git(repo, *args, capture=True):
@@ -62,15 +66,21 @@ def git(repo, *args, capture=True):
     return out.stdout.strip() if capture else ""
 
 
-def snapshot(repo, ref, dest):
-    """Export `ref` of `repo` into `dest` as a fresh one-commit git repository."""
-    archive = subprocess.run(["git", "-C", repo, "archive", ref], check=True,
-                             stdout=subprocess.PIPE)
-    subprocess.run(["tar", "-x", "-C", dest], input=archive.stdout, check=True)
-    for args in (["init", "-q"], ["add", "-A"],
-                 ["-c", "user.name=bench", "-c", "user.email=bench@localhost",
-                  "commit", "-q", "-m", "snapshot"]):
-        git(dest, *args)
+def add_worktree(repo, dest, ref, branch=None):
+    """Check `ref` out into its own worktree at `dest`, detached unless `branch` is given."""
+    with WORKTREE_LOCK:
+        if branch:
+            git(repo, "worktree", "add", "-q", "-B", branch, dest, ref)
+        else:
+            git(repo, "worktree", "add", "-q", "--detach", dest, ref)
+
+
+def remove_worktree(repo, dest):
+    with WORKTREE_LOCK:
+        subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", dest],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        shutil.rmtree(os.path.dirname(dest), ignore_errors=True)
+        git(repo, "worktree", "prune")
 
 
 def run_claude(args, cwd, prompt, timeout):
@@ -128,9 +138,9 @@ def grade(task, result_text, changed):
 
 
 def run_one(args, task, rep):
-    workdir = tempfile.mkdtemp(prefix="ai-ready-bench-")
+    workdir = os.path.join(tempfile.mkdtemp(prefix="ai-ready-bench-"), "repo")
     try:
-        snapshot(args.repo, args.ref, workdir)
+        add_worktree(args.repo, workdir, args.ref)
         flags = ["--tools"] + TASK_TOOLS + ["--permission-mode", "acceptEdits"]
         args_ = argparse.Namespace(**vars(args), extra_flags=flags)
         data, wall = run_claude(args_, workdir, task["prompt"], args.timeout)
@@ -144,7 +154,7 @@ def run_one(args, task, rep):
         rec["result"] = (data.get("result") or "")[:4000]
         return rec
     finally:
-        shutil.rmtree(workdir, ignore_errors=True)
+        remove_worktree(args.repo, workdir)
 
 
 def cmd_run(args):
@@ -178,7 +188,15 @@ def cmd_run(args):
 
 def cmd_prepare(args):
     repo = os.path.abspath(args.repo)
-    git(repo, "checkout", "-q", "-B", args.branch, args.base)
+    workdir = os.path.join(tempfile.mkdtemp(prefix="ai-ready-prepare-"), "repo")
+    add_worktree(repo, workdir, args.base, branch=args.branch)
+    try:
+        prepare_in(args, repo, workdir)
+    finally:
+        remove_worktree(repo, workdir)
+
+
+def prepare_in(args, repo, workdir):
     flags = ["--tools", "Skill", "Read", "Grep", "Glob", "Edit", "Write", "Bash",
              "--allowedTools", "Bash(python3 *)", "Bash(git log *)", "Bash(git status *)",
              "Bash(git diff *)", "Bash(ls *)", "Bash(wc *)", "Bash(mkdir *)",
@@ -186,10 +204,10 @@ def cmd_prepare(args):
     for plugin in args.plugin_dir or []:
         flags += ["--add-dir", os.path.abspath(plugin)]
     args_ = argparse.Namespace(**vars(args), extra_flags=flags)
-    data, wall = run_claude(args_, repo, args.prompt or PREPARE_PROMPT, args.timeout)
+    data, wall = run_claude(args_, workdir, args.prompt or PREPARE_PROMPT, args.timeout)
     rec = {"label": "prepare", "branch": args.branch, "model": args.model,
            "is_error": bool(data.get("is_error")), "duration_s": round(wall, 1),
-           "changed_files": changed_files(repo)}
+           "changed_files": changed_files(workdir)}
     rec.update(usage_record(data))
     rec["result"] = data.get("result")
     if args.out:
@@ -198,8 +216,8 @@ def cmd_prepare(args):
     print(json.dumps({k: v for k, v in rec.items() if k != "result"}, indent=2))
     print(rec["result"])
     if rec["changed_files"] and not args.no_commit:
-        git(repo, "add", "-A")
-        git(repo, "-c", "user.name=ai-ready-bench", "-c", "user.email=bench@localhost",
+        git(workdir, "add", "-A")
+        git(workdir, "-c", "user.name=ai-ready-bench", "-c", "user.email=bench@localhost",
             "commit", "-q", "-m", "Make the repository AI ready (make-ai-ready skill)")
         print("committed on", args.branch, file=sys.stderr)
 
