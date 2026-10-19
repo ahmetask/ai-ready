@@ -1,0 +1,30 @@
+{
+  "repo": "https://github.com/ahmetask/myagent",
+  "tasks": [
+    {
+      "id": "add-agent",
+      "prompt": "I want to add a new built-in agent called \"notes\" to this repo. Which files do I need to create or change, in order? Don't write code yet, just list the steps with exact file paths. Keep it short.",
+      "expect": ["workers/orchestrator/src/index.ts", "apps/hub/src/panels/registry.ts", "wrangler.jsonc"]
+    },
+    {
+      "id": "auth",
+      "prompt": "How does the hub login work? In which file is the session cookie verified, and how long does a session last? Keep it short.",
+      "expect": ["auth.ts", "30"]
+    },
+    {
+      "id": "commands",
+      "prompt": "What exact commands do I run to set up the repo, typecheck everything, and start the app locally? Which ports does it use? Keep it short.",
+      "expect": ["make setup", "typecheck", "make dev", "8787", "5173"]
+    },
+    {
+      "id": "storage",
+      "prompt": "Which storage bindings (D1 or KV) does each built-in agent use, and where are they configured? Keep it short.",
+      "expect": ["PORTFOLIO_KV", "PROGRESS", "DB", "wrangler.jsonc"]
+    },
+    {
+      "id": "todo-count",
+      "prompt": "Add a `count` capability to the todo agent that returns the number of todos that are not done. Follow the existing patterns and list it in the agent's manifest. Make the change, then summarize it in two lines.",
+      "expect_changed": ["agents/todo/src/*"]
+    }
+  ]
+}

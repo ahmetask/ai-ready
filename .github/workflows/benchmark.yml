@@ -1,0 +1,68 @@
+name: Token benchmark
+# Before/after token benchmark: runs the same intents against a target repository at two refs
+# (before and after make-ai-ready) in fresh headless Claude Code sessions and compares usage.
+# Needs an ANTHROPIC_API_KEY secret, and a token that can read the target repo if it is private.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Target repository (owner/name)
+        default: ahmetask/myagent
+      before_ref:
+        description: Ref before the repo was made AI ready
+        default: main
+      after_ref:
+        description: Ref after make-ai-ready
+        default: claude/ai-ready-benchmark
+      tasks:
+        description: Tasks file in this repo
+        default: benchmark/tasks/myagent.json
+      repeat:
+        description: Runs per task and phase
+        default: "3"
+      model:
+        description: Model for the sessions
+        default: sonnet
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BEFORE_REF: ${{ inputs.before_ref }}
+      AFTER_REF: ${{ inputs.after_ref }}
+      TASKS: ${{ inputs.tasks }}
+      REPEAT: ${{ inputs.repeat }}
+      MODEL: ${{ inputs.model }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          path: target
+          fetch-depth: 0
+          token: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
+      - run: git -C target fetch origin "$BEFORE_REF:$BEFORE_REF" "$AFTER_REF:$AFTER_REF" || true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Before
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >
+          python3 benchmark/run_benchmark.py run --repo target --ref "$BEFORE_REF"
+          --label before --tasks "$TASKS" --repeat "$REPEAT"
+          --model "$MODEL" --out results/before.jsonl
+      - name: After
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >
+          python3 benchmark/run_benchmark.py run --repo target --ref "$AFTER_REF"
+          --label after --tasks "$TASKS" --repeat "$REPEAT"
+          --model "$MODEL" --out results/after.jsonl
+      - name: Compare
+        run: python3 benchmark/run_benchmark.py compare results/before.jsonl results/after.jsonl | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results/

@@ -12,6 +12,8 @@ checks that changes keep them that way. See `README.md` for user-facing docs.
 - `plugins/ai-ready/hooks/hooks.json`, `plugins/ai-ready/commands/check.md`: Claude Code wiring.
 - `action.yml`, `.pre-commit-hooks.yaml`: CI integrations; both call the checker by path.
 - `.ai-ready/config.json`: this repo dogfoods its own check.
+- `benchmark/`: before/after token benchmark of the skill on a target repo (`run_benchmark.py`,
+  tasks in `benchmark/tasks/`, manual workflow `.github/workflows/benchmark.yml`). Same stdlib-only rule.
 
 ## Commands
 
