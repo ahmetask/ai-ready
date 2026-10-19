@@ -14,10 +14,13 @@ A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
   less AI ready. It runs as Claude Code hooks, as a slash command, in GitHub Actions, and in
   pre-commit.
 
-Why lean: `CLAUDE.md` is re-read on every turn. In a benchmark on a real repository, a
-~40-line `CLAUDE.md` (commands, guardrails and gotchas, with details in linked docs) cut tokens
-by 37% and cost by 28%. A longer `CLAUDE.md` cut tokens by only 26%, and it made a plain edit
-task 48% more expensive. The check keeps `CLAUDE.md` within a budget and stops it from growing.
+Why lean: `CLAUDE.md` is re-read on every turn. On a real repository, the first version of
+the skill wrote a long `CLAUDE.md`. That cut tokens by 26% overall but made a plain edit task
+48% more expensive ([results](benchmark/results/myagent-2026-10-19/README.md)). With the
+current skill, which writes a 41-line `CLAUDE.md` plus per-component docs loaded on demand,
+tokens fell by 29% and the edit task's overhead dropped to 7%
+([results](benchmark/results/myagent-2026-10-19-lean/README.md)). The check keeps
+`CLAUDE.md` within a budget and stops it from growing.
 
 ## Install
 
@@ -155,20 +158,17 @@ repos:
 
 ## Repository layout
 
-- `.claude-plugin/marketplace.json`: marketplace entry, so the repo can be added with `/plugin marketplace add`
-- `plugins/ai-ready/`: the plugin
-  - `skills/make-ai-ready/`: the audit, cleanup and planning skill, with its scoring criteria and plan template
-  - `commands/check.md`: the `/ai-ready:check` command
-  - `hooks/hooks.json`: the PostToolUse and Stop hooks
-  - `scripts/ai_ready_check.py`: the checker (Python 3.8+, stdlib only)
-  - `tests/`: unit tests
-- `action.yml`, `.pre-commit-hooks.yaml`: CI and pre-commit integrations
-- `benchmark/`: before/after token benchmark for the skill; see [benchmark/README.md](benchmark/README.md)
+The components, what each is responsible for, and how to run and test them are in
+[docs/architecture.md](docs/architecture.md). This repository runs ai-ready on itself: see
+`.ai-ready/` for its component map, config and plan.
 
 ## Development
 
 ```
 python3 -m unittest discover -s plugins/ai-ready/tests -v
-python3 plugins/ai-ready/scripts/ai_ready_check.py
+python3 plugins/ai-ready/scripts/ai_ready_check.py --base origin/main
 claude plugin validate plugins/ai-ready
 ```
+
+Working on this repository in Claude Code with the plugin installed turns on the hooks, because
+the repository has `.ai-ready/config.json`.

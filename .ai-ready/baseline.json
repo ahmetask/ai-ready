@@ -1,0 +1,18 @@
+{
+  "comment": "Known issues accepted when ai-ready was adopted. Fix them and re-run --update-baseline to shrink this list; never add to it by hand. instruction_sizes caps over-budget instruction files at their current size.",
+  "accepted": [],
+  "instruction_sizes": {
+    "CLAUDE.md": {
+      "lines": 32,
+      "bytes": 1433
+    },
+    "benchmark/CLAUDE.md": {
+      "lines": 13,
+      "bytes": 843
+    },
+    "plugins/CLAUDE.md": {
+      "lines": 20,
+      "bytes": 1245
+    }
+  }
+}
