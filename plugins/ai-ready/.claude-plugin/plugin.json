@@ -1,6 +1,6 @@
 {
   "name": "ai-ready",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Make a repository AI ready (audit, clean stale docs, write a plan) and keep it that way with hooks and a CI check.",
   "author": { "name": "Ahmet Ask", "url": "https://github.com/ahmetask" },
   "repository": "https://github.com/ahmetask/ai-ready",
