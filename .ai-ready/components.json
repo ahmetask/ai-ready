@@ -1,0 +1,39 @@
+{
+  "abstract": "ai-ready is a Claude Code plugin that makes repositories AI ready: it maps a repo's components, prunes stale docs, keeps CLAUDE.md lean, and checks in hooks and CI that changes keep it that way.",
+  "components": [
+    {
+      "name": "checker",
+      "path": "plugins/ai-ready/scripts",
+      "responsibility": "The stdlib-only checker: doc checks, CLAUDE.md budget, component map checks, discovery, explain and test verification.",
+      "docs": [
+        "README.md"
+      ],
+      "library": true,
+      "run": "python3 plugins/ai-ready/scripts/ai_ready_check.py",
+      "test": "python3 -m unittest discover -s plugins/ai-ready/tests",
+      "test_needs": []
+    },
+    {
+      "name": "skill",
+      "path": "plugins/ai-ready/skills",
+      "responsibility": "The make-ai-ready skill: understand the repo, prune docs, write a lean CLAUDE.md, plan, enforce.",
+      "docs": [
+        "plugins/ai-ready/skills/make-ai-ready/SKILL.md"
+      ],
+      "library": true,
+      "test": "claude plugin validate plugins/ai-ready",
+      "test_needs": []
+    },
+    {
+      "name": "benchmark",
+      "path": "benchmark",
+      "responsibility": "Before/after token and cost benchmark of the skill on a target repo (needs network and an API key; no tests of its own).",
+      "docs": [
+        "benchmark/README.md"
+      ],
+      "run": "python3 benchmark/run_benchmark.py --help",
+      "test": null,
+      "test_needs": []
+    }
+  ]
+}
