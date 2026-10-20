@@ -46,6 +46,24 @@ In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual
 runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
 `TARGET_REPO_TOKEN` secret when the target repository is private.
 
+## Measuring `/ai-ready:plan`
+
+`tasks/myagent-vague.json` holds vague prompts like a developer would type. Run them twice on
+the same AI-ready ref, with the plugin loaded both times, and change only the prefix:
+
+```
+python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
+    --label direct --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
+    --out results/direct.jsonl
+python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
+    --label plan --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
+    --prompt-prefix "/ai-ready:plan " --out results/plan.jsonl
+python3 benchmark/run_benchmark.py compare results/direct.jsonl results/plan.jsonl
+```
+
+The command is worth keeping only if `plan` costs less than `direct` (cost, not just tokens,
+since cache writes dominate) without failing more tasks.
+
 ## Tasks
 
 `tasks/<repo>.json` holds a list of `{id, prompt, expect, expect_changed}`. Pick intents a

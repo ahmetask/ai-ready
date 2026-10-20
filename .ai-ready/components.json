@@ -4,7 +4,7 @@
     {
       "name": "plugin",
       "path": "plugins/ai-ready",
-      "responsibility": "The plugin: the ai_ready_check.py checker, the make-ai-ready skill, the /ai-ready:check and /ai-ready:explain commands, and the PostToolUse/Stop hooks.",
+      "responsibility": "The plugin: the ai_ready_check.py checker, the make-ai-ready skill, the /ai-ready:check, /ai-ready:explain and /ai-ready:plan commands, and the PostToolUse/Stop hooks.",
       "docs": [
         "plugins/CLAUDE.md",
         "README.md"

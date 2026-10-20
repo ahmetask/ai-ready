@@ -10,6 +10,10 @@ A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
   and writes a prioritized plan to `.ai-ready/plan.md`.
 - **`/ai-ready:explain`**: a read-only overview of the repo: the abstract, plus each component
   with its responsibility, docs and run/test commands.
+- **`/ai-ready:plan <prompt>`**: turns a prompt into a short workflow (goal, components,
+  steps with exact files, the tests to run) from the component map, loading only the docs of
+  the components it touches, then does the work and verifies it. Questions and small changes
+  skip the plan. It costs nothing until you run it: no hook, and nothing added to every turn.
 - **ai-ready check**: a fast, dependency-free checker that fails when a change makes the repo
   less AI ready. It runs as Claude Code hooks, as a slash command, in GitHub Actions, and in
   pre-commit.

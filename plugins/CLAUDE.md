@@ -1,8 +1,8 @@
 # plugins/ai-ready
 
 The plugin: `scripts/ai_ready_check.py` (the checker that everything calls), the
-`make-ai-ready` skill, `/ai-ready:check` and `/ai-ready:explain`, and the PostToolUse and Stop
-hooks in `hooks/hooks.json`.
+`make-ai-ready` skill, `/ai-ready:check`, `/ai-ready:explain` and `/ai-ready:plan`, and the
+PostToolUse and Stop hooks in `hooks/hooks.json`.
 
 - Test: `python3 -m unittest discover -s plugins/ai-ready/tests` (offline, a few seconds; each
   test builds a throwaway git repo).
