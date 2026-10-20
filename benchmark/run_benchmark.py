@@ -143,11 +143,13 @@ def run_one(args, task, rep):
         add_worktree(args.repo, workdir, args.ref)
         flags = ["--tools"] + TASK_TOOLS + ["--permission-mode", "acceptEdits"]
         args_ = argparse.Namespace(**vars(args), extra_flags=flags)
-        data, wall = run_claude(args_, workdir, task["prompt"], args.timeout)
+        data, wall = run_claude(args_, workdir, args.prompt_prefix + task["prompt"],
+                                args.timeout)
         changed = changed_files(workdir)
         passed, missing = grade(task, data.get("result"), changed)
         rec = {"label": args.label, "ref": args.ref, "task": task["id"], "rep": rep,
-               "model": args.model, "is_error": bool(data.get("is_error")),
+               "model": args.model, "prompt_prefix": args.prompt_prefix,
+               "is_error": bool(data.get("is_error")),
                "passed": passed, "missing": missing, "changed_files": changed,
                "duration_s": round(wall, 1)}
         rec.update(usage_record(data))
@@ -293,6 +295,8 @@ def main(argv=None):
     p.add_argument("--repeat", type=int, default=3)
     p.add_argument("--jobs", type=int, default=3, help="sessions in parallel")
     p.add_argument("--out", required=True, help="JSONL file to append results to")
+    p.add_argument("--prompt-prefix", default="",
+                   help='prepended to every task prompt, e.g. "/ai-ready:plan "')
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("prepare", help="run make-ai-ready headless on a new branch")

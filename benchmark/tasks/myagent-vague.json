@@ -1,0 +1,26 @@
+{
+  "repo": "https://github.com/ahmetask/myagent",
+  "about": "Vague, developer-style prompts for measuring /ai-ready:plan: run them with and without --prompt-prefix \"/ai-ready:plan \" on the same AI-ready ref.",
+  "tasks": [
+    {
+      "id": "todo-open",
+      "prompt": "the todo agent should be able to tell me how many todos are still open",
+      "expect_changed": ["agents/todo/src/*"]
+    },
+    {
+      "id": "session-week",
+      "prompt": "make hub logins last a week instead of a month",
+      "expect_changed": ["*auth.ts"]
+    },
+    {
+      "id": "notes-agent",
+      "prompt": "add a notes agent, built in like the others, it only needs add and list",
+      "expect_changed": ["workers/orchestrator/src/index.ts"]
+    },
+    {
+      "id": "run-local",
+      "prompt": "how do I run this locally? keep it short",
+      "expect": ["make dev"]
+    }
+  ]
+}
