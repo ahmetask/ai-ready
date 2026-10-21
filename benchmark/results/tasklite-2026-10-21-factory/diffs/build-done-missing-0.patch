@@ -1,0 +1,147 @@
+diff --git a/.ai-ready/work/unknown-task-id.md b/.ai-ready/work/unknown-task-id.md
+new file mode 100644
+index 0000000..3ae4d0f
+--- /dev/null
++++ b/.ai-ready/work/unknown-task-id.md
+@@ -0,0 +1,39 @@
++# Work: unknown-task-id
++
++- **Goal:** `tasklite done <unknown id>` prints `no such task: <id>` and exits 1, and the API answers 404 for an unknown id.
++- **Request:** `python3 -m tasklite done 99` crashes with a traceback when there is no task 99. It should print `no such task: 99` and exit 1, and the API should answer 404 for an unknown id.
++- **Created:** 2026-10-21
++- **Components:** tasklite
++
++## 1. Handle unknown id in CLI done and add test
++
++- **Status:** done
++- **Agent:** coder
++- **Component:** tasklite
++- **Files:** `tasklite/cli.py`, `tests/test_cli.py`
++- **Verify:** `python3 -m unittest tests.test_cli`
++- **After:** none
++- **Attempts:** 1
++- **Note:** CLI done prints 'no such task: <id>' and exits 1; test added
++
++## 2. Return 404 for unknown id in API done route and add test
++
++- **Status:** done
++- **Agent:** coder
++- **Component:** tasklite
++- **Files:** `tasklite/api.py`, `tests/test_api.py`
++- **Verify:** `python3 -m unittest tests.test_api`
++- **After:** none
++- **Attempts:** 1
++- **Note:** API done route answers 404 for unknown id; test added
++
++## 3. Update docs for unknown-id behaviour and remove the Gotcha
++
++- **Status:** done
++- **Agent:** documenter
++- **Component:** tasklite
++- **Files:** `CLAUDE.md`, `README.md`
++- **Verify:** none
++- **After:** 1, 2
++- **Attempts:** 1
++- **Note:** CLAUDE.md gotcha removed; README documents unknown-id behaviour
+diff --git a/CLAUDE.md b/CLAUDE.md
+index a503f2e..bb2fe68 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -14,7 +14,6 @@ Task tracker: CLI + JSON HTTP API over one JSON file. Python 3.8+, stdlib only (
+ 
+ ## Gotchas
+ - `store.DEFAULT_PATH` reads `TASKLITE_FILE` at import time; setting it later has no effect.
+-- `Store.complete` raises `KeyError` on an unknown id; neither the CLI nor the API handles it.
+ - New CLI commands: subparser plus `if` branch in `cli.py`. New API routes: `do_GET`/`do_POST` in `api.py`.
+ 
+ ## Layout
+diff --git a/README.md b/README.md
+index 5772552..a825b00 100644
+--- a/README.md
++++ b/README.md
+@@ -13,4 +13,7 @@ python3 -m tasklite.api          # API on http://127.0.0.1:8080
+ 
+ Tasks are stored in `tasks.json` in the current directory (override with `TASKLITE_FILE`).
+ 
++Completing an unknown id prints `no such task: <id>` and exits 1 in the CLI; the API
++(`POST /tasks/<id>/done`) answers 404 with `{"error": "no such task: <id>"}`.
++
+ Tests: `python3 -m unittest discover -s tests -t .`
+diff --git a/tasklite/api.py b/tasklite/api.py
+index 3c964a6..aaee757 100644
+--- a/tasklite/api.py
++++ b/tasklite/api.py
+@@ -33,7 +33,12 @@ def make_handler(store):
+                 body = json.loads(self.rfile.read(length) or b"{}")
+                 self._send(201, task_json(store.add(body["title"])))
+             elif len(parts) == 3 and parts[0] == "tasks" and parts[2] == "done":
+-                self._send(200, task_json(store.complete(int(parts[1]))))
++                try:
++                    task = store.complete(int(parts[1]))
++                except KeyError:
++                    self._send(404, {"error": f"no such task: {parts[1]}"})
++                    return
++                self._send(200, task_json(task))
+             else:
+                 self._send(404, {"error": "not found"})
+ 
+diff --git a/tasklite/cli.py b/tasklite/cli.py
+index 68ab083..c81ce69 100644
+--- a/tasklite/cli.py
++++ b/tasklite/cli.py
+@@ -25,7 +25,11 @@ def main(argv=None, store=None):
+         for task in store.all():
+             print(f"[{'x' if task.done else ' '}] {task.id} {task.title}")
+     elif args.command == "done":
+-        task = store.complete(args.id)
++        try:
++            task = store.complete(args.id)
++        except KeyError:
++            print(f"no such task: {args.id}")
++            return 1
+         print(f"done {task.id}: {task.title}")
+     elif args.command == "stats":
+         print(f"total: {len(store.all())}")
+diff --git a/tests/test_api.py b/tests/test_api.py
+index abd146b..233f001 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -4,6 +4,7 @@ import tempfile
+ import threading
+ import unittest
+ from http.server import ThreadingHTTPServer
++from urllib.error import HTTPError
+ from urllib.request import Request, urlopen
+ 
+ from tasklite.api import make_handler
+@@ -28,6 +29,14 @@ class ApiTest(unittest.TestCase):
+         with urlopen(Request(self.base + path, data=data, method=method)) as resp:
+             return json.loads(resp.read())
+ 
++    def test_done_unknown_id_returns_404(self):
++        with self.assertRaises(HTTPError) as ctx:
++            self.request("POST", "/tasks/99/done", {})
++        self.assertEqual(ctx.exception.code, 404)
++        self.assertEqual(json.loads(ctx.exception.read()),
++                         {"error": "no such task: 99"})
++        ctx.exception.close()
++
+     def test_create_and_list(self):
+         self.request("POST", "/tasks", {"title": "call bob"})
+         self.request("POST", "/tasks/1/done", {})
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c462567..cd5ca75 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -22,6 +22,11 @@ class CliTest(unittest.TestCase):
+             code = main(list(argv), store=self.store)
+         return code, out.getvalue()
+ 
++    def test_done_unknown_id(self):
++        code, out = self.run_cli("done", "99")
++        self.assertEqual(code, 1)
++        self.assertEqual(out, "no such task: 99\n")
++
+     def test_add_list_done(self):
+         self.run_cli("add", "buy milk")
+         self.run_cli("done", "1")

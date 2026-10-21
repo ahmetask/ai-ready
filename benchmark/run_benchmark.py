@@ -8,6 +8,7 @@ Run it once on the repository before the make-ai-ready skill and once after, the
   run       run every task N times against one git ref of the target repo
   prepare   run the make-ai-ready skill headless on a new branch of the target repo
   compare   print a Markdown before/after table from two result files
+  example   copy the in-tree example project into a fresh git repository to benchmark on
 
 Python 3.8+, stdlib only. Needs the `claude` CLI on PATH and credentials for it.
 """
@@ -38,6 +39,7 @@ PARENT_SESSION_ENV = (
     "CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD",
     "CLAUDE_ADDITIONAL_DIRECTORIES",
     "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH",
 )
 
 TASK_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write"]
@@ -47,7 +49,7 @@ PREPARE_PROMPT = (
     "non-interactively and nobody can answer questions or confirm anything: do every phase "
     "without stopping and treat your own component map as confirmed. Apply the fix and merge "
     "cleanups, but do not delete any file (list proposed deletions in the plan instead). Never "
-    "deploy or touch remote resources. Write .ai-ready/components.json, the lean CLAUDE.md and "
+    "deploy or touch remote resources. Write .ai-ready/components.md, the lean CLAUDE.md and "
     ".ai-ready/plan.md, and turn on the check with --init and --update-baseline. Do not set up "
     "CI. Finish with a three-line summary."
 )
@@ -119,6 +121,37 @@ def usage_record(data):
     return rec
 
 
+def save_diff(workdir, path):
+    """Write every change the session left (tracked and untracked) as one patch."""
+    git(workdir, "add", "-A")
+    diff = subprocess.run(["git", "-C", workdir, "diff", "--cached", "--binary", "HEAD"],
+                          check=True, stdout=subprocess.PIPE, universal_newlines=True).stdout
+    with open(path, "w") as fh:
+        fh.write(diff)
+
+
+def run_checks(args, task, workdir):
+    """Run the tasks file's project `test` command and the task's hidden `check` script in the
+    session's worktree. Returns a list of failures (empty when everything passed)."""
+    failures, env = [], dict(clean_env(), PYTHONPATH=workdir)
+    commands = []
+    if task.get("check"):
+        script = os.path.join(os.path.dirname(os.path.abspath(args.tasks)), task["check"])
+        commands.append(("check", [sys.executable, script]))
+    if args.project_test and (task.get("check") or task.get("expect_changed")):
+        commands.append(("tests", args.project_test))
+    for name, cmd in commands:
+        try:
+            out = subprocess.run(cmd, cwd=workdir, env=env, shell=isinstance(cmd, str),
+                                 timeout=300, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 universal_newlines=True)
+            if out.returncode != 0:
+                failures.append("{}: {}".format(name, out.stdout.strip()[-300:]))
+        except subprocess.TimeoutExpired:
+            failures.append(name + ": timeout")
+    return failures
+
+
 def changed_files(workdir):
     status = subprocess.run(["git", "-C", workdir, "status", "--porcelain",
                              "--untracked-files=all"], check=True, stdout=subprocess.PIPE,
@@ -141,17 +174,27 @@ def run_one(args, task, rep):
     workdir = os.path.join(tempfile.mkdtemp(prefix="ai-ready-bench-"), "repo")
     try:
         add_worktree(args.repo, workdir, args.ref)
-        flags = ["--tools"] + TASK_TOOLS + ["--permission-mode", "acceptEdits"]
+        flags = ["--tools"] + (args.tools or TASK_TOOLS)
+        if args.allowed_tools:
+            flags += ["--allowedTools"] + args.allowed_tools
+        flags += ["--permission-mode", "acceptEdits"]
         args_ = argparse.Namespace(**vars(args), extra_flags=flags)
         data, wall = run_claude(args_, workdir, args.prompt_prefix + task["prompt"],
                                 args.timeout)
         changed = changed_files(workdir)
         passed, missing = grade(task, data.get("result"), changed)
+        missing += run_checks(args, task, workdir)
+        passed = not missing
+        if args.save_diffs:
+            os.makedirs(args.save_diffs, exist_ok=True)
+            save_diff(workdir, os.path.join(args.save_diffs, "{}-{}-{}.patch".format(
+                args.label, task["id"], rep)))
         rec = {"label": args.label, "ref": args.ref, "task": task["id"], "rep": rep,
                "model": args.model, "prompt_prefix": args.prompt_prefix,
                "is_error": bool(data.get("is_error")),
                "passed": passed, "missing": missing, "changed_files": changed,
-               "duration_s": round(wall, 1)}
+               "duration_s": round(wall, 1),
+               "subagents": (data.get("subagent_stats") or {}).get("spawned", 0)}
         rec.update(usage_record(data))
         rec["result"] = (data.get("result") or "")[:4000]
         return rec
@@ -161,7 +204,8 @@ def run_one(args, task, rep):
 
 def cmd_run(args):
     with open(args.tasks) as fh:
-        tasks = json.load(fh)["tasks"]
+        spec = json.load(fh)
+    tasks, args.project_test = spec["tasks"], spec.get("test")
     if args.only:
         tasks = [t for t in tasks if t["id"] in args.only]
     args.repo = os.path.abspath(args.repo)
@@ -222,6 +266,19 @@ def prepare_in(args, repo, workdir):
         git(workdir, "-c", "user.name=ai-ready-bench", "-c", "user.email=bench@localhost",
             "commit", "-q", "-m", "Make the repository AI ready (make-ai-ready skill)")
         print("committed on", args.branch, file=sys.stderr)
+
+
+def cmd_example(args):
+    """Copy the example project into DEST and commit it, so `run` and `prepare` can use it."""
+    if os.path.exists(args.dest):
+        sys.exit("{} already exists".format(args.dest))
+    shutil.copytree(args.src, args.dest,
+                    ignore=shutil.ignore_patterns("__pycache__", "tasks.json"))
+    git(args.dest, "init", "-q", "-b", "main")
+    git(args.dest, "add", "-A")
+    git(args.dest, "-c", "user.name=ai-ready-bench", "-c", "user.email=bench@localhost",
+        "commit", "-q", "-m", "Example project")
+    print(args.dest)
 
 
 def load(path):
@@ -296,7 +353,13 @@ def main(argv=None):
     p.add_argument("--jobs", type=int, default=3, help="sessions in parallel")
     p.add_argument("--out", required=True, help="JSONL file to append results to")
     p.add_argument("--prompt-prefix", default="",
-                   help='prepended to every task prompt, e.g. "/ai-ready:plan "')
+                   help='prepended to every task prompt, e.g. "/ai-ready:build --go "')
+    p.add_argument("--tools", nargs="+", help="tools the session may use (default: {})".format(
+        " ".join(TASK_TOOLS)))
+    p.add_argument("--allowed-tools", nargs="+",
+                   help='permission rules passed to --allowedTools, e.g. "Bash(python3 *)"')
+    p.add_argument("--save-diffs", default="",
+                   help="directory to save each session's changes to, as a patch")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("prepare", help="run make-ai-ready headless on a new branch")
@@ -307,6 +370,12 @@ def main(argv=None):
     p.add_argument("--no-commit", action="store_true")
     p.add_argument("--out", default="", help="JSONL file to append the prepare run to")
     p.set_defaults(func=cmd_prepare)
+
+    p = sub.add_parser("example", help="copy the example project into a new git repository")
+    p.add_argument("dest")
+    p.add_argument("--src", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                  "example", "tasklite"))
+    p.set_defaults(func=cmd_example)
 
     p = sub.add_parser("compare", help="Markdown table from two result files")
     p.add_argument("before")

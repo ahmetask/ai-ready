@@ -46,23 +46,38 @@ In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual
 runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
 `TARGET_REPO_TOKEN` secret when the target repository is private.
 
-## Measuring `/ai-ready:plan`
+## Example project
+
+`example/tasklite/` is a small stdlib Python project (a CLI and an HTTP API over a JSON file,
+with a planted bug) to benchmark on without any outside repository. `run_benchmark.py example
+DEST` copies it into a fresh git repository, and `prepare` then makes that repository AI ready.
+`tasks/tasklite.json` holds its prompts. Each task can name a hidden acceptance test in
+`tasks/tasklite-checks/` (`check`), and the file's `test` command, the project's own tests, also
+has to pass, so a run is graded on working code, not only on which files changed.
+
+`run` flags for this: `--tools` (session tools, for example adding `Bash` and `Agent`),
+`--allowed-tools` (permission rules such as `"Bash(python3 *)"`) and `--save-diffs DIR`, which
+keeps each session's changes as a patch. Results:
+[tasklite-2026-10-21-factory](results/tasklite-2026-10-21-factory/README.md).
+
+## Measuring the factory
 
 `tasks/myagent-vague.json` holds vague prompts like a developer would type. Run them twice on
-the same AI-ready ref, with the plugin loaded both times, and change only the prefix:
+the same AI-ready ref, with the plugin loaded both times, and change only the prefix. `--go`
+skips the factory's "factory or direct?" question, which a headless session can't answer:
 
 ```
 python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
     --label direct --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
     --out results/direct.jsonl
 python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
-    --label plan --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
-    --prompt-prefix "/ai-ready:plan " --out results/plan.jsonl
-python3 benchmark/run_benchmark.py compare results/direct.jsonl results/plan.jsonl
+    --label build --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
+    --prompt-prefix "/ai-ready:build --go " --out results/build.jsonl
+python3 benchmark/run_benchmark.py compare results/direct.jsonl results/build.jsonl
 ```
 
-The command is worth keeping only if `plan` costs less than `direct` (cost, not just tokens,
-since cache writes dominate) without failing more tasks.
+Expect the factory to cost more than `direct` on small prompts, since that is why it asks
+first. It earns its place if it fails fewer multi-step tasks, at a cost you accept.
 
 ## Tasks
 

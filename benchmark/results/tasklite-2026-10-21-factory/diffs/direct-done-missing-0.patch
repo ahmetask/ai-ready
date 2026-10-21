@@ -1,0 +1,48 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index a503f2e..3b0fe0f 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -14,7 +14,7 @@ Task tracker: CLI + JSON HTTP API over one JSON file. Python 3.8+, stdlib only (
+ 
+ ## Gotchas
+ - `store.DEFAULT_PATH` reads `TASKLITE_FILE` at import time; setting it later has no effect.
+-- `Store.complete` raises `KeyError` on an unknown id; neither the CLI nor the API handles it.
++- `Store.complete` raises `KeyError` on an unknown id; the CLI prints `no such task: <id>` (exit 1), the API answers 404.
+ - New CLI commands: subparser plus `if` branch in `cli.py`. New API routes: `do_GET`/`do_POST` in `api.py`.
+ 
+ ## Layout
+diff --git a/tasklite/api.py b/tasklite/api.py
+index 3c964a6..4ad88de 100644
+--- a/tasklite/api.py
++++ b/tasklite/api.py
+@@ -33,7 +33,12 @@ def make_handler(store):
+                 body = json.loads(self.rfile.read(length) or b"{}")
+                 self._send(201, task_json(store.add(body["title"])))
+             elif len(parts) == 3 and parts[0] == "tasks" and parts[2] == "done":
+-                self._send(200, task_json(store.complete(int(parts[1]))))
++                try:
++                    task = store.complete(int(parts[1]))
++                except (KeyError, ValueError):
++                    self._send(404, {"error": "not found"})
++                    return
++                self._send(200, task_json(task))
+             else:
+                 self._send(404, {"error": "not found"})
+ 
+diff --git a/tasklite/cli.py b/tasklite/cli.py
+index 68ab083..c81ce69 100644
+--- a/tasklite/cli.py
++++ b/tasklite/cli.py
+@@ -25,7 +25,11 @@ def main(argv=None, store=None):
+         for task in store.all():
+             print(f"[{'x' if task.done else ' '}] {task.id} {task.title}")
+     elif args.command == "done":
+-        task = store.complete(args.id)
++        try:
++            task = store.complete(args.id)
++        except KeyError:
++            print(f"no such task: {args.id}")
++            return 1
+         print(f"done {task.id}: {task.title}")
+     elif args.command == "stats":
+         print(f"total: {len(store.all())}")

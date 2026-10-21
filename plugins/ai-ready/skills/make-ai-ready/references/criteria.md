@@ -22,7 +22,7 @@ Score each dimension 0-3 and cite one line of evidence (a file, a command you ra
 4. **Doc structure.** One canonical place per topic; no duplicates, contradictions, orphaned
    docs, abandoned plans or stray notes. `README.md` for humans, `CLAUDE.md` for agents,
    `docs/` one file per topic, per-directory detail in nested `CLAUDE.md` files.
-5. **Components understood.** `.ai-ready/components.json` has an abstract and, for every
+5. **Components understood.** `.ai-ready/components.md` has an abstract and, for every
    component, a responsibility, docs, and run and test commands that work. There are no
    unmapped components and no source files so large an agent can't hold them in context
    (flag files over ~1,500 lines).

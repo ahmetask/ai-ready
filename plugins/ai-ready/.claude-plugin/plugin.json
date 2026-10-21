@@ -1,9 +1,9 @@
 {
   "name": "ai-ready",
-  "version": "0.4.0",
-  "description": "Make a repository AI ready (audit, clean stale docs, write a plan) and keep it that way with hooks and a CI check.",
+  "version": "0.5.0",
+  "description": "Make a repository AI ready (component map, lean docs) and keep it that way with hooks and a CI check, plus a factory that plans, codes, tests and documents work with agents.",
   "author": { "name": "Ahmet Ask", "url": "https://github.com/ahmetask" },
   "repository": "https://github.com/ahmetask/ai-ready",
   "license": "MIT",
-  "keywords": ["ai-ready", "documentation", "claude-md", "agents-md", "ci"]
+  "keywords": ["ai-ready", "documentation", "claude-md", "agents-md", "ci", "agents", "planning"]
 }

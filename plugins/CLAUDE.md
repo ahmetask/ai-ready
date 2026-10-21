@@ -1,8 +1,9 @@
 # plugins/ai-ready
 
 The plugin: `scripts/ai_ready_check.py` (the checker that everything calls), the
-`make-ai-ready` skill, `/ai-ready:check`, `/ai-ready:explain` and `/ai-ready:plan`, and the
-PostToolUse and Stop hooks in `hooks/hooks.json`.
+`make-ai-ready` skill, `/ai-ready:check` and `/ai-ready:explain`, the factory
+(`commands/plan.md`, `build.md`, `status.md` and the four agents in `agents/`), and the hooks
+in `hooks/hooks.json`.
 
 - Test: `python3 -m unittest discover -s plugins/ai-ready/tests` (offline, a few seconds; each
   test builds a throwaway git repo).
@@ -16,5 +17,14 @@ PostToolUse and Stop hooks in `hooks/hooks.json`.
 - `SKILL.md` refers to its own phases by number ("phase 4"); renumber those references when
   adding a phase.
 - This file lives outside `plugins/ai-ready/` so it is not shipped with the plugin.
+- Everything the plugin generates for people to read is Markdown that the checker also
+  parses: the component map (`components.md`, `- **Field:** value` lines under `## name`)
+  and trackers. Keep `parse_*_md` and `render_*_md` in step, and keep reading the older
+  `components.json`, because users still have it.
+- Factory state lives only in `.ai-ready/work/<slug>.md`. Commands and agents change it
+  through `--work-set`, never by rewriting the file, and only the orchestrating command
+  calls it. Agent replies are capped at a few lines because the orchestrator keeps them in
+  its context.
+- Agent and command descriptions are loaded into every session, so keep them to one line.
 - `${CLAUDE_PLUGIN_ROOT}` is the plugin directory at runtime; commands and hooks reach the
   checker through it.
