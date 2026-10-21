@@ -1,6 +1,6 @@
 {
   "repo": "https://github.com/ahmetask/myagent",
-  "about": "Vague, developer-style prompts for measuring /ai-ready:plan: run them with and without --prompt-prefix \"/ai-ready:plan \" on the same AI-ready ref.",
+  "about": "Vague, developer-style prompts for measuring the factory: run them with and without --prompt-prefix \"/ai-ready:build --go \" on the same AI-ready ref.",
   "tasks": [
     {
       "id": "todo-open",

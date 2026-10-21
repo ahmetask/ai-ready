@@ -1,34 +1,25 @@
 ---
-description: Turn a prompt into a short, structured workflow using the component map, then do it
-argument-hint: "<what you want done>"
-allowed-tools: Read, Grep, Glob
+description: Turn a prompt into a tracked plan of tasks for the ai-ready factory (asks first; small changes go direct)
+argument-hint: "[--go] <what you want done>"
+allowed-tools: Bash(python3:*), Read, Grep, Glob
 ---
 
 The request: $ARGUMENTS
 
-Turn the request into a short workflow, then carry it out. The goal is to load only the
-context the request needs, so keep every step below as small as it can be.
+Plugin directory: !`echo "${CLAUDE_PLUGIN_ROOT}"`
 
-1. Read `.ai-ready/components.json`. If it doesn't exist, skip the map: work out the
-   affected area from the request and a quick search instead, and at the end suggest the
-   `make-ai-ready` skill in one line.
-2. Pick the components the request touches, usually one to three, by their `path` and
-   `responsibility`. Read only those components' docs (their nested `CLAUDE.md` first) and
-   nothing else up front. Don't read the other components' docs or explore outside the
-   chosen paths unless a step turns out to need it.
-3. If the request is a question, or a small change inside one component that the docs
-   already explain, don't write a plan: say "No plan needed" and just answer or do it.
-4. Otherwise, write the workflow before changing anything, in at most 15 lines:
-   - **Goal**: one sentence.
-   - **Components**: each chosen component, and why it is involved.
-   - **Steps**: numbered, in order, each naming the exact files it changes.
-   - **Verify**: each touched component's `test` command from the map, noting its
-     `test_needs`.
-   Keep the workflow in the conversation; don't write it to a file.
-5. If the request is ambiguous in a way that changes the steps, ask one question and stop.
-   Otherwise carry out the steps in order.
-6. Finish with the Verify commands when you can run them, and fix what they report. If the
-   change moved a component's files, responsibility, or run/test command, update
-   `.ai-ready/components.json` and that component's docs so the repo stays AI ready (the
-   ai-ready Stop hook checks this before you finish). End with a two-line summary of what
-   changed and what was verified.
+Tracked work so far:
+!`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --work 2>&1 || true`
+
+1. **Triage.** Read `.ai-ready/components.json` if it exists, and nothing else yet. Call the
+   request *small* if it is a question, or a change inside one component that touches a few
+   files and needs no design. Otherwise call it *large*.
+2. **Ask once.** Unless the request starts with `--go`, ask the user one question: run it
+   through the factory (a tracked plan, done by coder, tester and documenter agents) or do it
+   directly. Recommend direct for small requests, because the factory costs extra agent
+   sessions, and the factory for large ones. If they pick direct, do the request now: read
+   only the touched component's docs, make the change, run its `test` command, and stop here.
+3. **Plan.** Pick a short kebab-case slug for the work (at most five words). Launch the
+   ai-ready `planner` subagent with the request, the slug and the plugin directory above.
+4. **Show** the subagent's summary as is, including any open question. End with one line:
+   `/ai-ready:build <slug>` runs it. Don't start the tasks yourself.

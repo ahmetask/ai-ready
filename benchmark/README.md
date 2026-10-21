@@ -46,23 +46,24 @@ In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual
 runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
 `TARGET_REPO_TOKEN` secret when the target repository is private.
 
-## Measuring `/ai-ready:plan`
+## Measuring the factory
 
 `tasks/myagent-vague.json` holds vague prompts like a developer would type. Run them twice on
-the same AI-ready ref, with the plugin loaded both times, and change only the prefix:
+the same AI-ready ref, with the plugin loaded both times, and change only the prefix. `--go`
+skips the factory's "factory or direct?" question, which a headless session can't answer:
 
 ```
 python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
     --label direct --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
     --out results/direct.jsonl
 python3 benchmark/run_benchmark.py run --repo ../myagent --ref claude/ai-ready-benchmark-v2 \
-    --label plan --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
-    --prompt-prefix "/ai-ready:plan " --out results/plan.jsonl
-python3 benchmark/run_benchmark.py compare results/direct.jsonl results/plan.jsonl
+    --label build --tasks benchmark/tasks/myagent-vague.json --plugin-dir plugins/ai-ready \
+    --prompt-prefix "/ai-ready:build --go " --out results/build.jsonl
+python3 benchmark/run_benchmark.py compare results/direct.jsonl results/build.jsonl
 ```
 
-The command is worth keeping only if `plan` costs less than `direct` (cost, not just tokens,
-since cache writes dominate) without failing more tasks.
+Expect the factory to cost more than `direct` on small prompts, since that is why it asks
+first. It earns its place if it fails fewer multi-step tasks, at a cost you accept.
 
 ## Tasks
 

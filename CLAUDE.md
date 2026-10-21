@@ -1,7 +1,8 @@
 # ai-ready
 
 Claude Code plugin that makes repositories AI ready (component map, pruned docs, lean
-`CLAUDE.md`), plus a stdlib checker that keeps them that way in hooks, CI and pre-commit.
+`CLAUDE.md`), plus a stdlib checker that keeps them that way in hooks, CI and pre-commit, and a
+factory that runs planned work through coder, tester and documenter agents.
 
 ## Commands
 
@@ -24,7 +25,7 @@ Claude Code plugin that makes repositories AI ready (component map, pruned docs,
 
 ## Layout
 
-- `plugins/ai-ready/`: the plugin (checker, skill, commands, hooks, tests); see `plugins/CLAUDE.md`
+- `plugins/ai-ready/`: the plugin (checker, skill, commands, factory agents, hooks, tests); see `plugins/CLAUDE.md`
 - `benchmark/`: token benchmark of the skill; see its `CLAUDE.md`
 - `action.yml`, `.pre-commit-hooks.yaml`, `.github/workflows/`: CI integrations
 - `.ai-ready/`: this repo's own component map, config, baseline and plan

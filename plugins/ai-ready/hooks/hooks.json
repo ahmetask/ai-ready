@@ -1,5 +1,5 @@
 {
-  "description": "Keep an opted-in repository AI ready: flag broken doc references as docs are edited, and block finishing a turn that leaves new ai-ready issues behind. Inactive unless the repository has .ai-ready/config.json.",
+  "description": "Keep an opted-in repository AI ready: flag broken doc references as docs are edited, block finishing a turn that leaves new ai-ready issues behind, restore the factory's unfinished work after compaction or resume, and (opt-in) offer the factory for long prompts. Inactive unless the repository has .ai-ready/config.json.",
   "hooks": {
     "PostToolUse": [
       {
@@ -20,6 +20,29 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py\" --hook stop",
             "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py\" --hook prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py\" --hook session-start",
+            "timeout": 10
           }
         ]
       }

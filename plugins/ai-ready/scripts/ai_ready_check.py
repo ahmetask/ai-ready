@@ -28,7 +28,12 @@ Usage:
   ai_ready_check.py [--root DIR] [--format text|json] [--base REF]
                     [--update-baseline] [--no-baseline] [--init]
   ai_ready_check.py --discover | --explain | --verify-tests [COMPONENT] [--timeout S]
-  ai_ready_check.py --hook post-edit|stop      (reads Claude Code hook JSON on stdin)
+  ai_ready_check.py --work [SLUG] | --work-set SLUG TASK STATUS [--note TEXT]
+  ai_ready_check.py --hook post-edit|stop|prompt|session-start   (hook JSON on stdin)
+
+The factory (/ai-ready:plan and /ai-ready:build) tracks planned work in
+.ai-ready/work/<slug>.json; --work prints it compactly and --work-set updates one task, so
+agents never re-read or rewrite the whole tracker.
 
 Configuration lives in .ai-ready/config.json; accepted pre-existing issues live in
 .ai-ready/baseline.json so only *new* problems fail CI and hooks.
@@ -52,6 +57,7 @@ CONFIG_DIR = ".ai-ready"
 CONFIG_FILE = f"{CONFIG_DIR}/config.json"
 BASELINE_FILE = f"{CONFIG_DIR}/baseline.json"
 COMPONENTS_FILE = f"{CONFIG_DIR}/components.json"
+WORK_DIR = f"{CONFIG_DIR}/work"
 
 DEFAULT_CONFIG = {
     "instruction_files": ["CLAUDE.md", "AGENTS.md"],
@@ -62,6 +68,11 @@ DEFAULT_CONFIG = {
     "min_score": 0,
     "doc_watch": [],
 }
+# The optional "factory" object in config.json; merged key by key over these defaults.
+DEFAULT_FACTORY = {"max_attempts": 3, "suggest": False, "suggest_min_words": 40}
+TASK_STATUSES = ("todo", "doing", "done", "blocked")
+AGENTS = ("coder", "tester", "documenter")
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,59}$")
 
 SKIP_DIRS = {
     ".git", "node_modules", "vendor", "dist", "build", "out", "target", ".venv", "venv",
@@ -712,6 +723,140 @@ def verify_tests(root: Path, cfg: dict, only: str | None, timeout: int) -> list[
     return results
 
 
+# -------------------------------------------------------------------- work tracker
+
+def factory_cfg(cfg: dict) -> dict:
+    user = cfg.get("factory")
+    return {**DEFAULT_FACTORY, **(user if isinstance(user, dict) else {})}
+
+
+def work_path(root: Path, slug: str) -> Path:
+    if not SLUG_RE.match(slug):
+        raise ValueError(f"invalid work slug '{slug}': use lowercase letters, digits and dashes")
+    return root / WORK_DIR / f"{slug}.json"
+
+
+def list_work(root: Path) -> list[tuple[str, dict]]:
+    """All tracked work, most recently changed first."""
+    d = root / WORK_DIR
+    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
+    out = []
+    for f in files:
+        data = load_json(f, None)
+        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+            out.append((f.stem, data))
+    return out
+
+
+def validate_work(data: dict) -> list[str]:
+    problems, ids = [], set()
+    if not str(data.get("goal", "")).strip():
+        problems.append("no goal")
+    for n, t in enumerate(data.get("tasks") or []):
+        if not isinstance(t, dict):
+            problems.append(f"task #{n + 1} is not an object")
+            continue
+        tid = str(t.get("id", "")).strip()
+        if not tid or tid in ids:
+            problems.append(f"task #{n + 1} has a missing or duplicate id")
+        ids.add(tid)
+        if not str(t.get("title", "")).strip():
+            problems.append(f"task {tid} has no title")
+        if t.get("agent", "coder") not in AGENTS:
+            problems.append(f"task {tid}: agent must be one of {', '.join(AGENTS)}")
+        if t.get("status", "todo") not in TASK_STATUSES:
+            problems.append(f"task {tid}: status must be one of {', '.join(TASK_STATUSES)}")
+    for t in data.get("tasks") or []:
+        if isinstance(t, dict):
+            for dep in t.get("after") or []:
+                if str(dep) not in ids:
+                    problems.append(f"task {t.get('id')} waits on unknown task {dep}")
+    if not data.get("tasks"):
+        problems.append("no tasks")
+    return problems
+
+
+def tasks_of(data: dict) -> list[dict]:
+    return [t for t in data.get("tasks") or [] if isinstance(t, dict)]
+
+
+def ready_tasks(data: dict) -> list[dict]:
+    """Tasks that can start now: not done or blocked, and everything they wait on is done."""
+    done = {str(t.get("id")) for t in tasks_of(data) if t.get("status") == "done"}
+    return [t for t in tasks_of(data) if t.get("status", "todo") in ("todo", "doing")
+            and all(str(d) in done for d in t.get("after") or [])]
+
+
+def work_state(data: dict) -> str:
+    tasks = tasks_of(data)
+    if tasks and all(t.get("status") == "done" for t in tasks):
+        return "done"
+    return "active" if ready_tasks(data) else "blocked"
+
+
+def active_work(root: Path) -> tuple[str, dict] | None:
+    for slug, data in list_work(root):
+        if work_state(data) != "done":
+            return slug, data
+    return None
+
+
+def work_summary(slug: str, data: dict) -> str:
+    tasks = tasks_of(data)
+    done = sum(t.get("status") == "done" for t in tasks)
+    blocked = sum(t.get("status") == "blocked" for t in tasks)
+    extra = f", {blocked} blocked" if blocked else ""
+    return f"{slug}: {data.get('goal', '').strip()} ({done}/{len(tasks)} done{extra}, {work_state(data)})"
+
+
+def format_work(slug: str, data: dict) -> str:
+    marks = {"todo": " ", "doing": ">", "done": "x", "blocked": "!"}
+    lines = [f"work {work_summary(slug, data)}"]
+    for t in tasks_of(data):
+        status = t.get("status", "todo")
+        tries = f" try {t['attempts']}" if t.get("attempts") else ""
+        after = f" after {','.join(map(str, t['after']))}" if t.get("after") else ""
+        lines.append(f"  [{marks.get(status, '?')}] {t.get('id')} {t.get('agent', 'coder')}"
+                     f" {t.get('component') or '-'}: {t.get('title', '')}{after}{tries}")
+        if t.get("files"):
+            lines.append(f"      files: {', '.join(t['files'])}")
+        if t.get("verify"):
+            lines.append(f"      verify: {t['verify']}")
+        if t.get("note"):
+            lines.append(f"      note: {t['note']}")
+    nxt = ready_tasks(data)
+    lines.append(f"next: {', '.join(str(t.get('id')) for t in nxt)}" if nxt else
+                 "next: none" + (" (all done)" if work_state(data) == "done" else
+                                 " (blocked: ask the user)"))
+    for p in validate_work(data):
+        lines.append(f"problem: {p}")
+    return "\n".join(lines)
+
+
+def set_task(root: Path, cfg: dict, slug: str, tid: str, status: str, note: str | None) -> str:
+    if status not in TASK_STATUSES:
+        raise ValueError(f"status must be one of {', '.join(TASK_STATUSES)}")
+    path = work_path(root, slug)
+    data = load_json(path, None)
+    if not isinstance(data, dict):
+        raise ValueError(f"no work '{slug}' in {WORK_DIR}")
+    task = next((t for t in tasks_of(data) if str(t.get("id")) == tid), None)
+    if task is None:
+        raise ValueError(f"work '{slug}' has no task {tid}")
+    if status == "doing" and task.get("status") != "doing":
+        task["attempts"] = int(task.get("attempts") or 0) + 1
+        limit = int(factory_cfg(cfg)["max_attempts"])
+        if task["attempts"] > limit:
+            task["attempts"], status = limit, "blocked"
+            note = f"attempt limit ({limit}) reached; last: {task.get('note') or 'no note'}"
+    task["status"] = status
+    if note is not None:
+        task["note"] = " ".join(note.split())[:200]
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return f"task {tid}: {status}" + (f" (try {task['attempts']})" if status == "doing" else "") \
+        + "\n" + format_work(slug, data).splitlines()[-1]
+
+
 # ---------------------------------------------------------------------- reporting
 
 def score(issues: list[Issue]) -> int:
@@ -773,6 +918,15 @@ def hook(mode: str) -> int:
     if not (root / CONFIG_FILE).is_file():
         return 0  # repository has not opted in
     cfg = load_config(root)
+    if mode == "prompt":
+        return prompt_hook(payload, cfg)
+    if mode == "session-start":
+        work = active_work(root)
+        if work:
+            print(f"ai-ready: unfinished work {work_summary(*work)}. "
+                  f"`python3 {Path(__file__).resolve()} --work {work[0]}` shows its tasks; "
+                  f"/ai-ready:build {work[0]} continues it.")
+        return 0
     baseline = load_baseline(root)
 
     if mode == "stop":
@@ -809,7 +963,48 @@ def hook(mode: str) -> int:
     return 2
 
 
+def prompt_hook(payload: dict, cfg: dict) -> int:
+    """UserPromptSubmit: for a long prompt, have Claude offer the factory before starting."""
+    fc = factory_cfg(cfg)
+    prompt = str(payload.get("prompt") or "").strip()
+    if not fc["suggest"] or prompt.startswith("/") or len(prompt.split()) < int(fc["suggest_min_words"]):
+        return 0
+    print("ai-ready: this looks like multi-step work. Before starting, ask the user once whether "
+          "to run it through /ai-ready:build (planned, tracked tasks done by agents) or directly; "
+          "direct is faster for small changes.")
+    return 0
+
+
 # ---------------------------------------------------------------------------- cli
+
+def show_work(root: Path, slug: str, fmt: str) -> int:
+    if slug:
+        try:
+            data = load_json(work_path(root, slug), None)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        if not isinstance(data, dict):
+            print(f"error: no work '{slug}' in {WORK_DIR}", file=sys.stderr)
+            return 1
+        print(json.dumps(data, indent=2) if fmt == "json" else format_work(slug, data))
+        return 1 if validate_work(data) else 0
+    work = list_work(root)
+    if fmt == "json":
+        print(json.dumps({s: d for s, d in work}, indent=2))
+        return 0
+    if not work:
+        print(f"no tracked work in {WORK_DIR}")
+        return 0
+    active = active_work(root)
+    if active:
+        print(format_work(*active))
+    others = [w for w in work if not active or w[0] != active[0]]
+    if others:
+        print("other work:" if active else "work:")
+        print("\n".join(f"  {work_summary(*w)}" for w in others))
+    return 0
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Check that a repository is (and stays) AI ready.")
@@ -820,7 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--update-baseline", action="store_true",
                     help="accept all current issues into .ai-ready/baseline.json")
     ap.add_argument("--init", action="store_true", help="write a default .ai-ready/config.json")
-    ap.add_argument("--hook", choices=["post-edit", "stop"], help="run as a Claude Code hook")
+    ap.add_argument("--hook", choices=["post-edit", "stop", "prompt", "session-start"], help="run as a Claude Code hook")
     ap.add_argument("--discover", action="store_true",
                     help="print candidate components detected from build files (JSON)")
     ap.add_argument("--explain", action="store_true",
@@ -828,6 +1023,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--verify-tests", nargs="?", const="", metavar="COMPONENT",
                     help="run each component's test command (or just COMPONENT's)")
     ap.add_argument("--timeout", type=int, default=600, help="per-component test timeout (s)")
+    ap.add_argument("--work", nargs="?", const="", metavar="SLUG",
+                    help=f"show tracked work in {WORK_DIR} (all, or one SLUG in full)")
+    ap.add_argument("--work-set", nargs=3, metavar=("SLUG", "TASK", "STATUS"),
+                    help="set a task's status: " + "|".join(TASK_STATUSES))
+    ap.add_argument("--note", help="with --work-set: a one-line note kept on the task")
     args = ap.parse_args(argv)
 
     if args.hook:
@@ -845,6 +1045,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     cfg = load_config(root)
+    if args.work_set:
+        try:
+            print(set_task(root, cfg, *args.work_set, note=args.note))
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        return 0
+    if args.work is not None:
+        return show_work(root, args.work, args.format)
     if args.discover:
         print(json.dumps(discover(root, cfg), indent=2))
         return 0

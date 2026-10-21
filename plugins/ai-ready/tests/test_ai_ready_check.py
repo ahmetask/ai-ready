@@ -51,15 +51,26 @@ class CheckerTest(unittest.TestCase):
             code = arc.main(["--root", str(self.root), *args])
         return code, out.getvalue()
 
-    def run_hook(self, mode, payload):
+    def run_hook(self, mode, payload, stream="stderr"):
         sys.stdin = io.StringIO(json.dumps(payload))
-        err = io.StringIO()
+        buf = io.StringIO()
+        redirect = redirect_stderr if stream == "stderr" else redirect_stdout
         try:
-            with redirect_stderr(err):
+            with redirect(buf):
                 code = arc.hook(mode)
         finally:
             sys.stdin = sys.__stdin__
-        return code, err.getvalue()
+        return code, buf.getvalue()
+
+    def write_work(self, slug="add-retry"):
+        write(self.root, f".ai-ready/work/{slug}.json", json.dumps({
+            "goal": "Retry failed requests",
+            "tasks": [
+                {"id": "1", "title": "Add retry", "agent": "coder", "component": "api",
+                 "files": ["src/app.py"], "verify": "true", "status": "todo"},
+                {"id": "2", "title": "Document retry", "agent": "documenter", "after": ["1"],
+                 "status": "todo"},
+            ]}))
 
     def test_clean_repo_passes(self):
         self.assertEqual(self.checks(), [])
@@ -322,6 +333,71 @@ class CheckerTest(unittest.TestCase):
         self.assertIn("src/removed.py", err)
         self.assertEqual(self.run_hook("stop", {"cwd": str(self.root),
                                                 "stop_hook_active": True})[0], 0)
+
+    def test_work_tracker(self):
+        self.assertIn("no tracked work", self.run_main("--work")[1])
+        self.write_work()
+        code, out = self.run_main("--work", "add-retry")
+        self.assertEqual(code, 0)
+        self.assertIn("(0/2 done, active)", out)
+        self.assertIn("verify: true", out)
+        self.assertTrue(out.rstrip().endswith("next: 1"))
+        code, out = self.run_main("--work-set", "add-retry", "1", "doing")
+        self.assertIn("task 1: doing (try 1)", out)
+        code, out = self.run_main("--work-set", "add-retry", "1", "done", "--note", "added\n retry")
+        self.assertIn("next: 2", out)
+        data = json.loads((self.root / ".ai-ready/work/add-retry.json").read_text())
+        self.assertEqual(data["tasks"][0]["note"], "added retry")
+        self.run_main("--work-set", "add-retry", "2", "done")
+        self.assertIn("(2/2 done, done)", self.run_main("--work")[1])
+        self.assertEqual(self.run_main("--work-set", "add-retry", "9", "done")[0], 1)
+        self.assertEqual(self.run_main("--work-set", "../x", "1", "done")[0], 1)
+        self.assertEqual(self.run_main("--work-set", "add-retry", "1", "maybe")[0], 1)
+
+    def test_work_attempt_limit_blocks(self):
+        write(self.root, ".ai-ready/config.json", json.dumps({"factory": {"max_attempts": 2}}))
+        self.write_work()
+        for _ in range(2):
+            self.run_main("--work-set", "add-retry", "1", "doing")
+            self.run_main("--work-set", "add-retry", "1", "todo", "--note", "test fails")
+        _, out = self.run_main("--work-set", "add-retry", "1", "doing")
+        self.assertIn("task 1: blocked", out)
+        self.assertIn("next: none (blocked: ask the user)", out)
+        code, out = self.run_main("--work", "add-retry")
+        self.assertIn("attempt limit (2) reached; last: test fails", out)
+
+    def test_work_validation(self):
+        write(self.root, ".ai-ready/work/bad.json", json.dumps({"tasks": [
+            {"id": "1", "title": "x", "agent": "painter"}, {"id": "1", "after": ["7"]}]}))
+        code, out = self.run_main("--work", "bad")
+        self.assertEqual(code, 1)
+        for problem in ("no goal", "duplicate id", "agent must be", "has no title", "unknown task 7"):
+            self.assertIn(problem, out)
+
+    def test_session_start_hook_restores_active_work(self):
+        payload = {"cwd": str(self.root), "source": "compact"}
+        self.write_work()
+        self.assertEqual(self.run_hook("session-start", payload, "stdout")[1], "")  # no config
+        write(self.root, ".ai-ready/config.json", "{}")
+        code, out = self.run_hook("session-start", payload, "stdout")
+        self.assertEqual(code, 0)
+        self.assertIn("unfinished work add-retry: Retry failed requests", out)
+        self.assertIn("/ai-ready:build add-retry", out)
+        self.run_main("--work-set", "add-retry", "1", "done")
+        self.run_main("--work-set", "add-retry", "2", "done")
+        self.assertEqual(self.run_hook("session-start", payload, "stdout")[1], "")
+
+    def test_prompt_hook_is_opt_in(self):
+        long_prompt = {"cwd": str(self.root), "prompt": "word " * 50}
+        write(self.root, ".ai-ready/config.json", "{}")
+        self.assertEqual(self.run_hook("prompt", long_prompt, "stdout")[1], "")
+        write(self.root, ".ai-ready/config.json", json.dumps({"factory": {"suggest": True}}))
+        code, out = self.run_hook("prompt", long_prompt, "stdout")
+        self.assertEqual(code, 0)
+        self.assertIn("/ai-ready:build", out)
+        for prompt in ("fix the typo", "/ai-ready:build " + "word " * 50):
+            self.assertEqual(self.run_hook("prompt", {"cwd": str(self.root), "prompt": prompt},
+                                           "stdout")[1], "")
 
 
 if __name__ == "__main__":

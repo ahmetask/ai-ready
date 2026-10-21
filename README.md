@@ -10,10 +10,10 @@ A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
   and writes a prioritized plan to `.ai-ready/plan.md`.
 - **`/ai-ready:explain`**: a read-only overview of the repo: the abstract, plus each component
   with its responsibility, docs and run/test commands.
-- **`/ai-ready:plan <prompt>`**: turns a prompt into a short workflow (goal, components,
-  steps with exact files, the tests to run) from the component map, loading only the docs of
-  the components it touches, then does the work and verifies it. Questions and small changes
-  skip the plan. It costs nothing until you run it: no hook, and nothing added to every turn.
+- **The factory** (`/ai-ready:plan`, `/ai-ready:build`, `/ai-ready:status`): turns a prompt
+  into a tracked plan of tasks and has coder, tester and documenter agents work through it,
+  retrying failed tests, until it is done. It asks before it starts, since small changes are
+  faster without it. See [The factory](#the-factory).
 - **ai-ready check**: a fast, dependency-free checker that fails when a change makes the repo
   less AI ready. It runs as Claude Code hooks, as a slash command, in GitHub Actions, and in
   pre-commit.
@@ -37,6 +37,25 @@ In Claude Code:
 
 Then, in the repository you want to prepare, ask Claude to "make this repo AI ready" or run
 `/ai-ready:make-ai-ready`.
+
+## The factory
+
+For work bigger than a quick edit, the factory plans the work, tracks it, and runs it through
+agents, each in its own context, so the main session stays small.
+
+| Piece | What it does |
+|---|---|
+| `/ai-ready:plan [--go] <prompt>` | Triages the request and asks once whether to use the factory, recommending direct for small changes. Then the `planner` agent writes the plan |
+| `.ai-ready/work/<slug>.json` | The tracker: a goal and 2-8 tasks, each with agent, component, files, a narrow `verify` command, dependencies (`after`), status, attempts and a one-line note |
+| `/ai-ready:build [<slug> \| [--go] <prompt>]` | The loop. For each ready task, `coder` makes the change, `tester` runs `verify` and reports `PASS` or `FAIL` with a short cause, and a failure goes back to the coder. After 3 attempts (`max_attempts`) the task is blocked and left for you. Ends with the `documenter` and the full check |
+| `/ai-ready:status [<slug>]` | Shows the tracker: tasks, attempts, notes, what runs next |
+| `planner`, `coder`, `tester`, `documenter` | The agents. Each one reads only its component's docs and replies in 8 to 12 lines. The tester waits on slow tests and CI in the background. The documenter updates the component map and docs, keeping only what a future session needs |
+
+Context stays low by design. The orchestrating session reads summaries, not code or logs, and
+gets state from `--work`, not from the JSON. After a compaction or resume, a hook adds one line
+about unfinished work. Nothing is added to ordinary turns: the commands cost nothing until you
+run them, and the prompt hook that offers the factory for long prompts is opt-in. Commit
+`.ai-ready/work/` to share and resume work across machines, or ignore it.
 
 ## What the check verifies
 
@@ -73,6 +92,8 @@ python3 plugins/ai-ready/scripts/ai_ready_check.py [--root DIR] [--format text|j
 python3 plugins/ai-ready/scripts/ai_ready_check.py --discover        # candidate components (JSON)
 python3 plugins/ai-ready/scripts/ai_ready_check.py --explain         # abstract + component table
 python3 plugins/ai-ready/scripts/ai_ready_check.py --verify-tests [COMPONENT] [--timeout 600]
+python3 plugins/ai-ready/scripts/ai_ready_check.py --work [SLUG]  # factory tracker
+python3 plugins/ai-ready/scripts/ai_ready_check.py --work-set SLUG TASK todo|doing|done|blocked [--note TEXT]
 ```
 
 ## Component map
@@ -117,7 +138,8 @@ this file.
   "min_score": 0,
   "doc_watch": [
     { "paths": ["src/api/**"], "docs": ["docs/api.md"], "severity": "error" }
-  ]
+  ],
+  "factory": { "max_attempts": 3, "suggest": false, "suggest_min_words": 40 }
 }
 ```
 
@@ -127,6 +149,9 @@ this file.
 - `doc_watch`: when files matching `paths` change and none of `docs` do, report `doc-drift`.
   Globs use `fnmatch`, so `*` also matches `/`. Changes are uncommitted and untracked files,
   plus `REF...HEAD` when `--base REF` is given.
+- `factory`: `max_attempts` per task before it is blocked. With `suggest`, a prompt of at
+  least `suggest_min_words` words that isn't a slash command makes Claude offer the factory
+  first.
 
 ## Keeping it AI ready
 
@@ -137,6 +162,8 @@ this file.
 - before Claude finishes a turn, the full check runs on the working tree; if it finds new
   issues, Claude is asked once to fix them. Set `AI_READY_DISABLE=1` to turn the hooks off.
 - `/ai-ready:check` runs the check on demand and fixes what it finds.
+- after a compaction or resume, unfinished factory work is restated in one line; with
+  `factory.suggest`, long prompts get a one-line nudge to offer the factory.
 
 **GitHub Actions**:
 
