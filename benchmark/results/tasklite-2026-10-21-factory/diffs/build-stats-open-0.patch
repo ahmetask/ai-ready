@@ -1,0 +1,63 @@
+diff --git a/.ai-ready/work/stats-open-done.json b/.ai-ready/work/stats-open-done.json
+new file mode 100644
+index 0000000..222add4
+--- /dev/null
++++ b/.ai-ready/work/stats-open-done.json
+@@ -0,0 +1,25 @@
++{
++  "goal": "`tasklite stats` prints `total: N, open: N, done: N` with correct counts.",
++  "request": "make `tasklite stats` also say how many tasks are open and done, like `total: 3, open: 2, done: 1`.",
++  "created": "2026-10-21",
++  "components": [
++    "tasklite"
++  ],
++  "tasks": [
++    {
++      "id": "1",
++      "title": "Print total, open and done counts in the stats branch of cli.main, and add a stats test in tests/test_cli.py (empty store and mixed open/done)",
++      "agent": "coder",
++      "component": "tasklite",
++      "files": [
++        "tasklite/cli.py",
++        "tests/test_cli.py"
++      ],
++      "verify": "python3 -m unittest tests.test_cli",
++      "after": [],
++      "status": "done",
++      "attempts": 1,
++      "note": "stats prints total/open/done counts; tests added"
++    }
++  ]
++}
+diff --git a/tasklite/cli.py b/tasklite/cli.py
+index 68ab083..82d1cff 100644
+--- a/tasklite/cli.py
++++ b/tasklite/cli.py
+@@ -28,7 +28,9 @@ def main(argv=None, store=None):
+         task = store.complete(args.id)
+         print(f"done {task.id}: {task.title}")
+     elif args.command == "stats":
+-        print(f"total: {len(store.all())}")
++        tasks = store.all()
++        done_count = sum(1 for task in tasks if task.done)
++        print(f"total: {len(tasks)}, open: {len(tasks) - done_count}, done: {done_count}")
+     return 0
+ 
+ 
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c462567..4f7f0c8 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -26,3 +26,12 @@ class CliTest(unittest.TestCase):
+         self.run_cli("add", "buy milk")
+         self.run_cli("done", "1")
+         self.assertEqual(self.run_cli("list")[1], "[x] 1 buy milk\n")
++
++    def test_stats_empty(self):
++        self.assertEqual(self.run_cli("stats")[1], "total: 0, open: 0, done: 0\n")
++
++    def test_stats_mixed(self):
++        for title in ("a", "b", "c"):
++            self.run_cli("add", title)
++        self.run_cli("done", "2")
++        self.assertEqual(self.run_cli("stats")[1], "total: 3, open: 2, done: 1\n")

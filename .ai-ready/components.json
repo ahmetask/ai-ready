@@ -28,7 +28,7 @@
     {
       "name": "benchmark",
       "path": "benchmark",
-      "responsibility": "Before/after token and cost benchmark of the skill on a target repo, with recorded results.",
+      "responsibility": "Before/after token and cost benchmark of the skill and the factory on a target repo (or the in-tree tasklite example), with hidden acceptance checks and recorded results.",
       "docs": [
         "benchmark/CLAUDE.md",
         "benchmark/README.md"

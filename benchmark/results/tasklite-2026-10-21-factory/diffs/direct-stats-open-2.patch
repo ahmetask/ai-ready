@@ -1,0 +1,15 @@
+diff --git a/tasklite/cli.py b/tasklite/cli.py
+index 68ab083..0389f2f 100644
+--- a/tasklite/cli.py
++++ b/tasklite/cli.py
+@@ -28,7 +28,9 @@ def main(argv=None, store=None):
+         task = store.complete(args.id)
+         print(f"done {task.id}: {task.title}")
+     elif args.command == "stats":
+-        print(f"total: {len(store.all())}")
++        tasks = store.all()
++        done = sum(1 for t in tasks if t.done)
++        print(f"total: {len(tasks)}, open: {len(tasks) - done}, done: {done}")
+     return 0
+ 
+ 

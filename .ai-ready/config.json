@@ -6,7 +6,8 @@
   "max_instructions_lines": 60,
   "max_instructions_bytes": 4000,
   "ignore": [
-    "plugins/ai-ready/skills/**"
+    "plugins/ai-ready/skills/**",
+    "benchmark/results/**"
   ],
   "fail_on": "error",
   "min_score": 90,

@@ -15,7 +15,7 @@ The component map is `.ai-ready/components.json`. Its checks keep this page hone
 |---|---|---|---|---|
 | plugin | `plugins/ai-ready` | The checker, the `make-ai-ready` skill, `/ai-ready:check` and `/ai-ready:explain`, the factory (`/ai-ready:plan`, `/ai-ready:build`, `/ai-ready:status`, the work tracker and its four agents), and the hooks | [CLAUDE.md](../plugins/CLAUDE.md), [README](../README.md) | `python3 -m unittest discover -s plugins/ai-ready/tests` |
 | integrations | `action.yml` | The GitHub Action, `.pre-commit-hooks.yaml` and this repo's CI workflow | [README](../README.md#keeping-it-ai-ready) | `python3 plugins/ai-ready/scripts/ai_ready_check.py --base origin/main` |
-| benchmark | `benchmark` | Before/after token benchmark of the skill, with recorded results | [CLAUDE.md](../benchmark/CLAUDE.md), [README](../benchmark/README.md) | `python3 benchmark/run_benchmark.py compare` on recorded results (offline) |
+| benchmark | `benchmark` | Before/after token benchmark of the skill and the factory, on another repo or the in-tree `tasklite` example, with recorded results | [CLAUDE.md](../benchmark/CLAUDE.md), [README](../benchmark/README.md) | `python3 benchmark/run_benchmark.py compare` on recorded results (offline) |
 
 All tests run offline in seconds, with no services or credentials.
 

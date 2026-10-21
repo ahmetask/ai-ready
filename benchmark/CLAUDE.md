@@ -10,4 +10,7 @@ Before/after token benchmark of the `make-ai-ready` skill; usage and flags are i
   afterwards. Don't change this, because sessions would leak edits into each other.
 - Each run's results go in a new `results/<repo>-<date>[-variant]/` folder with a README
   explaining it. Existing results are records; don't edit them.
-- Tasks live in `tasks/<repo>.json` as `{id, prompt, expect, expect_changed}`.
+- Tasks live in `tasks/<repo>.json` as `{id, prompt, expect, expect_changed, check}`. A
+  `check` is a hidden acceptance script, run in the session's worktree afterwards.
+- `example/tasklite/` is the in-tree target. Its README and tests belong to the example, so
+  keep its bug (`done 99` crashes) and the `tasklite-checks/` passing only after the fix.

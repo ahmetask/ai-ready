@@ -1,0 +1,179 @@
+diff --git a/.ai-ready/baseline.json b/.ai-ready/baseline.json
+new file mode 100644
+index 0000000..4624386
+--- /dev/null
++++ b/.ai-ready/baseline.json
+@@ -0,0 +1,14 @@
++{
++  "comment": "Known issues accepted when ai-ready was adopted. Fix them and re-run --update-baseline to shrink this list; never add to it by hand. instruction_sizes caps over-budget instruction files at their current size.",
++  "accepted": [],
++  "instruction_sizes": {
++    "CLAUDE.md": {
++      "lines": 18,
++      "bytes": 629
++    },
++    "tasklite/CLAUDE.md": {
++      "lines": 13,
++      "bytes": 757
++    }
++  }
++}
+diff --git a/.ai-ready/components.json b/.ai-ready/components.json
+new file mode 100644
+index 0000000..a782649
+--- /dev/null
++++ b/.ai-ready/components.json
+@@ -0,0 +1,14 @@
++{
++  "abstract": "tasklite is a tiny task tracker for local use: a command line and a JSON HTTP API that share one Store, which keeps tasks in a single JSON file (tasks.json, or $TASKLITE_FILE). Python 3.8+, standard library only.",
++  "components": [
++    {
++      "name": "tasklite",
++      "path": "tasklite",
++      "responsibility": "CLI (cli.py), HTTP API (api.py) and JSON-file storage (store.py); both front ends call Store.",
++      "docs": ["README.md", "tasklite/CLAUDE.md"],
++      "run": "python3 -m tasklite list",
++      "test": "python3 -m unittest discover -s tests -t .",
++      "test_needs": []
++    }
++  ]
++}
+diff --git a/.ai-ready/config.json b/.ai-ready/config.json
+new file mode 100644
+index 0000000..029c724
+--- /dev/null
++++ b/.ai-ready/config.json
+@@ -0,0 +1,12 @@
++{
++  "instruction_files": [
++    "CLAUDE.md",
++    "AGENTS.md"
++  ],
++  "max_instructions_lines": 60,
++  "max_instructions_bytes": 4000,
++  "ignore": [],
++  "fail_on": "error",
++  "min_score": 0,
++  "doc_watch": []
++}
+diff --git a/.ai-ready/plan.md b/.ai-ready/plan.md
+new file mode 100644
+index 0000000..36857e5
+--- /dev/null
++++ b/.ai-ready/plan.md
+@@ -0,0 +1,60 @@
++# AI readiness plan: tasklite
++
++_Generated 2026-10-21 by the ai-ready skill. Checker score: n/a (no map, no CLAUDE.md) to 100/100._
++
++## Summary
++
++A small, clean repo (about 240 lines) that lacked agent instructions and a component map. It is now ready: the biggest remaining gaps are no lint/type checking and no CI.
++
++## Scores
++
++| Dimension | Before | After cleanup | Evidence |
++|---|---|---|---|
++| Agent instructions | 0 | 3 | no CLAUDE.md before; now 19 lines |
++| Build/test/lint/run commands | 2 | 2 | README test command works; no lint command exists |
++| Docs accuracy | 2 | 3 | README omitted the `stats` command (fixed); checker reports 0 issues |
++| Doc structure | 2 | 3 | README for humans, CLAUDE.md for agents, nested `tasklite/CLAUDE.md` |
++| Components understood | 0 | 3 | `.ai-ready/components.json` with abstract, run and test |
++| Environment setup | 2 | 2 | stdlib only, no lockfile needed; Python version is not pinned (README says 3.8+) |
++| Feedback loops | 2 | 2 | tests pass offline in 0.7s; no linter or type checker |
++| Conventions | 1 | 2 | gotchas in `tasklite/CLAUDE.md` |
++| Safety rails | 2 | 2 | `tasks.json` gitignored; no deploy or secrets |
++| Staying ready | 0 | 1 | check configured with baseline; no CI (not requested) |
++| **Total (0-30)** | 13 | 23 | |
++
++## Components
++
++tasklite is a tiny task tracker for local use: a CLI and a JSON HTTP API share one Store, which keeps tasks in a single JSON file. Map: [components.json](components.json).
++
++| Component | Responsibility | Docs | Run | Test | Tests ran? | Time | Needs |
++|---|---|---|---|---|---|---|---|
++| tasklite | CLI, HTTP API, JSON-file storage | README.md, tasklite/CLAUDE.md | `python3 -m tasklite list` | `python3 -m unittest discover -s tests -t .` | yes, passed | 0.7s | none |
++
++## Making tests easy to run
++
++Nothing to change: the tests run offline with one command and use temp files.
++
++## Cleanup done
++
++- Fixed: `README.md`: added the `stats` command, which the CLI supports but the README did not list.
++- Added: `CLAUDE.md` (19 lines, 0 before), `tasklite/CLAUDE.md`, `.ai-ready/components.json`.
++- Merged / Deleted: nothing. Proposed deletions: none.
++
++## Backlog
++
++| # | Change | Why it helps agents | Files | Effort |
++|---|---|---|---|---|
++| 1 | Add a linter/type check (e.g. ruff, mypy) and a single documented command | Agents get fast feedback beyond tests | `CLAUDE.md` | S |
++| 2 | Handle unknown task ids in `Store.complete` and the API (return 404, not a traceback) | Removes a gotcha and an untested path | `tasklite/store.py`, `tasklite/api.py`, `tests/` | S |
++| 3 | Add CI running the tests and `ai_ready_check.py` | Keeps docs and tests from drifting | `.github/workflows/` | S |
++| 4 | Test the `stats` command | No test mentions it today | `tests/test_cli.py` | S |
++
++## Keeping it ready
++
++- Enforcement: `.ai-ready/config.json` written; no CI or pre-commit (not requested). Claude Code hooks run if the plugin is installed.
++- `doc_watch` rules: none; the docs are small and track the code through the component map.
++- Baseline: 0 accepted issues in `.ai-ready/baseline.json`.
++
++## Open questions
++
++- Is Python 3.8 still the minimum supported version?
+diff --git a/CLAUDE.md b/CLAUDE.md
+new file mode 100644
+index 0000000..b57e3ed
+--- /dev/null
++++ b/CLAUDE.md
+@@ -0,0 +1,18 @@
++# tasklite
++
++Task tracker: CLI + JSON HTTP API over one JSON file. Python 3.8+, stdlib only.
++
++## Commands
++- Test: `python3 -m unittest discover -s tests -t .` (offline, fast)
++- CLI: `python3 -m tasklite add|list|done|stats`
++- API: `python3 -m tasklite.api` (127.0.0.1:8080)
++
++## Guardrails
++- No third-party dependencies.
++- `tasks.json` is user data (gitignored); never commit it. Tests use `Store(path)` with a temp file.
++
++## Layout
++- `tasklite/` CLI, API and storage (details in `tasklite/CLAUDE.md`)
++- `tests/` unittest suites for store, cli and api
++
++Overview: [README.md](README.md). Component map: `.ai-ready/components.json`.
+diff --git a/README.md b/README.md
+index 4d03c8c..5772552 100644
+--- a/README.md
++++ b/README.md
+@@ -7,6 +7,7 @@ standard library only.
+ python3 -m tasklite add "buy milk"
+ python3 -m tasklite list
+ python3 -m tasklite done 1
++python3 -m tasklite stats
+ python3 -m tasklite.api          # API on http://127.0.0.1:8080
+ ```
+ 
+diff --git a/tasklite/CLAUDE.md b/tasklite/CLAUDE.md
+new file mode 100644
+index 0000000..15587e3
+--- /dev/null
++++ b/tasklite/CLAUDE.md
+@@ -0,0 +1,13 @@
++# tasklite package
++
++CLI (`cli.py`), HTTP API (`api.py`) and JSON-file storage (`store.py`). Both front ends go through `Store`.
++
++- Run CLI: `python3 -m tasklite add|list|done|stats`; API: `python3 -m tasklite.api` (127.0.0.1:8080).
++- Test (from repo root): `python3 -m unittest discover -s tests -t .`. Offline, no setup.
++- Standard library only; keep it that way. Python 3.8+ syntax.
++
++## Gotchas
++- `DEFAULT_PATH` in `store.py` reads `TASKLITE_FILE` at import time; tests must pass an explicit `Store(path)`.
++- `Store.complete` raises `KeyError` on an unknown id; the API does not catch it.
++- A new CLI command needs a subparser and a branch in `cli.main`; a new API route goes in `api.do_GET`/`do_POST`.
++- Never commit `tasks.json` (gitignored user data).

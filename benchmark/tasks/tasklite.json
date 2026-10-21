@@ -1,0 +1,40 @@
+{
+  "repo": "benchmark/example/tasklite",
+  "about": "Developer-style prompts on the tasklite example, from a one-line answer to a change across all three components. Each `check` is a hidden acceptance test in tasklite-checks/, run in the session's worktree afterwards together with the project's own tests. Compare direct sessions with --prompt-prefix \"/ai-ready:build --go \" on the same AI-ready ref.",
+  "test": "python3 -m unittest discover -s tests -t .",
+  "tasks": [
+    {
+      "id": "run-tests",
+      "prompt": "how do I run the tests here? one line",
+      "expect": [
+        "unittest"
+      ]
+    },
+    {
+      "id": "stats-open",
+      "prompt": "make `tasklite stats` also say how many tasks are open and done, like `total: 3, open: 2, done: 1`",
+      "expect_changed": [
+        "tasklite/cli.py"
+      ],
+      "check": "tasklite-checks/stats_open.py"
+    },
+    {
+      "id": "done-missing",
+      "prompt": "`python3 -m tasklite done 99` crashes with a traceback when there is no task 99. it should print `no such task: 99` and exit 1, and the API should answer 404 for an unknown id",
+      "expect_changed": [
+        "tasklite/*.py"
+      ],
+      "check": "tasklite-checks/done_missing.py"
+    },
+    {
+      "id": "due-dates",
+      "prompt": "add due dates. `tasklite add \"pay rent\" --due 2026-01-31` sets one, `tasklite list --overdue` shows only open tasks due before today, and the API takes \"due\" on POST /tasks and supports GET /tasks?overdue=1. old tasks.json files without due dates must still load. add tests",
+      "expect_changed": [
+        "tasklite/store.py",
+        "tasklite/cli.py",
+        "tasklite/api.py"
+      ],
+      "check": "tasklite-checks/due_dates.py"
+    }
+  ]
+}

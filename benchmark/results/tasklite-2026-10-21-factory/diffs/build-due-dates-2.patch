@@ -1,0 +1,363 @@
+diff --git a/.ai-ready/work/due-dates.json b/.ai-ready/work/due-dates.json
+new file mode 100644
+index 0000000..de0bbd4
+--- /dev/null
++++ b/.ai-ready/work/due-dates.json
+@@ -0,0 +1,76 @@
++{
++  "goal": "Tasks can carry an optional ISO due date, settable from the CLI and API, and overdue open tasks can be listed from both; old tasks.json files still load.",
++  "request": "add due dates. `tasklite add \"pay rent\" --due 2026-01-31` sets one, `tasklite list --overdue` shows only open tasks due before today, and the API takes \"due\" on POST /tasks and supports GET /tasks?overdue=1. Old tasks.json files without due dates must still load. Add tests.",
++  "created": "2026-10-21",
++  "components": [
++    "tasklite"
++  ],
++  "tasks": [
++    {
++      "id": "1",
++      "title": "Add optional due (YYYY-MM-DD string, default None) to Task, validate in Store.add(title, due=None) raising ValueError on bad format, add Store.overdue(today=None) returning open tasks with due < today; old files without due must load; add tests in test_store.py including a legacy-file load",
++      "agent": "coder",
++      "component": "tasklite",
++      "files": [
++        "tasklite/store.py",
++        "tests/test_store.py"
++      ],
++      "verify": "python3 -m unittest tests.test_store",
++      "after": [],
++      "status": "done",
++      "attempts": 1,
++      "note": "Task.due, Store.add validation, Store.overdue + tests"
++    },
++    {
++      "id": "2",
++      "title": "CLI: add --due to add, --overdue flag to list (uses Store.overdue), show due in list output; add tests in test_cli.py",
++      "agent": "coder",
++      "component": "tasklite",
++      "files": [
++        "tasklite/cli.py",
++        "tests/test_cli.py"
++      ],
++      "verify": "python3 -m unittest tests.test_cli",
++      "after": [
++        "1"
++      ],
++      "status": "done",
++      "attempts": 1,
++      "note": "CLI --due and list --overdue + tests"
++    },
++    {
++      "id": "3",
++      "title": "API: include due in task_json, accept optional \"due\" on POST /tasks (400 on invalid date), support GET /tasks?overdue=1 by parsing the query string; add tests in test_api.py",
++      "agent": "coder",
++      "component": "tasklite",
++      "files": [
++        "tasklite/api.py",
++        "tests/test_api.py"
++      ],
++      "verify": "python3 -m unittest tests.test_api",
++      "after": [
++        "1"
++      ],
++      "status": "done",
++      "attempts": 1,
++      "note": "API due on POST, GET ?overdue=1 + tests"
++    },
++    {
++      "id": "4",
++      "title": "Document due dates: new CLI flags, API field and query, legacy-file compatibility",
++      "agent": "documenter",
++      "component": "tasklite",
++      "files": [
++        "README.md",
++        "tasklite/CLAUDE.md"
++      ],
++      "after": [
++        "2",
++        "3"
++      ],
++      "status": "done",
++      "attempts": 1,
++      "note": "README and tasklite/CLAUDE.md updated"
++    }
++  ]
++}
+diff --git a/README.md b/README.md
+index 5772552..679f5b3 100644
+--- a/README.md
++++ b/README.md
+@@ -11,6 +11,11 @@ python3 -m tasklite stats
+ python3 -m tasklite.api          # API on http://127.0.0.1:8080
+ ```
+ 
++Due dates: `add "pay rent" --due 2026-11-01` and `list --overdue` (open tasks past due).
++An invalid date prints an error and exits with code 2. The API accepts `"due"` on
++`POST /tasks` (400 `{"error": ...}` if invalid), returns `due` in task JSON, and supports
++`GET /tasks?overdue=1`. Older `tasks.json` files without `due` still load.
++
+ Tasks are stored in `tasks.json` in the current directory (override with `TASKLITE_FILE`).
+ 
+ Tests: `python3 -m unittest discover -s tests -t .`
+diff --git a/tasklite/CLAUDE.md b/tasklite/CLAUDE.md
+index 15587e3..330b30e 100644
+--- a/tasklite/CLAUDE.md
++++ b/tasklite/CLAUDE.md
+@@ -10,4 +10,5 @@ CLI (`cli.py`), HTTP API (`api.py`) and JSON-file storage (`store.py`). Both fro
+ - `DEFAULT_PATH` in `store.py` reads `TASKLITE_FILE` at import time; tests must pass an explicit `Store(path)`.
+ - `Store.complete` raises `KeyError` on an unknown id; the API does not catch it.
+ - A new CLI command needs a subparser and a branch in `cli.main`; a new API route goes in `api.do_GET`/`do_POST`.
++- `due` is an optional `YYYY-MM-DD` string; `Store.add` raises `ValueError` on a bad date (CLI exits 2, API returns 400). Tasks in `tasks.json` may lack `due`; read with `.get`.
+ - Never commit `tasks.json` (gitignored user data).
+diff --git a/tasklite/api.py b/tasklite/api.py
+index 3c964a6..6d5c9ef 100644
+--- a/tasklite/api.py
++++ b/tasklite/api.py
+@@ -2,12 +2,13 @@
+ 
+ import json
+ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from urllib.parse import parse_qs, urlsplit
+ 
+ from .store import Store
+ 
+ 
+ def task_json(task):
+-    return {"id": task.id, "title": task.title, "done": task.done}
++    return {"id": task.id, "title": task.title, "done": task.done, "due": task.due}
+ 
+ 
+ def make_handler(store):
+@@ -21,8 +22,14 @@ def make_handler(store):
+             self.wfile.write(data)
+ 
+         def do_GET(self):
+-            if self.path == "/tasks":
+-                self._send(200, [task_json(t) for t in store.all()])
++            url = urlsplit(self.path)
++            if url.path == "/tasks":
++                query = parse_qs(url.query)
++                if query.get("overdue", [""])[0] in ("1", "true"):
++                    tasks = store.overdue()
++                else:
++                    tasks = store.all()
++                self._send(200, [task_json(t) for t in tasks])
+             else:
+                 self._send(404, {"error": "not found"})
+ 
+@@ -31,7 +38,12 @@ def make_handler(store):
+             if parts == ["tasks"]:
+                 length = int(self.headers.get("Content-Length") or 0)
+                 body = json.loads(self.rfile.read(length) or b"{}")
+-                self._send(201, task_json(store.add(body["title"])))
++                try:
++                    task = store.add(body["title"], due=body.get("due"))
++                except ValueError as e:
++                    self._send(400, {"error": str(e)})
++                    return
++                self._send(201, task_json(task))
+             elif len(parts) == 3 and parts[0] == "tasks" and parts[2] == "done":
+                 self._send(200, task_json(store.complete(int(parts[1]))))
+             else:
+diff --git a/tasklite/cli.py b/tasklite/cli.py
+index 68ab083..53fb1b0 100644
+--- a/tasklite/cli.py
++++ b/tasklite/cli.py
+@@ -11,7 +11,9 @@ def main(argv=None, store=None):
+     sub = parser.add_subparsers(dest="command", required=True)
+     add = sub.add_parser("add", help="add a task")
+     add.add_argument("title")
+-    sub.add_parser("list", help="list tasks")
++    add.add_argument("--due", help="due date, YYYY-MM-DD")
++    lst = sub.add_parser("list", help="list tasks")
++    lst.add_argument("--overdue", action="store_true", help="only overdue tasks")
+     done = sub.add_parser("done", help="mark a task done")
+     done.add_argument("id", type=int)
+     sub.add_parser("stats", help="summary of tasks")
+@@ -19,11 +21,17 @@ def main(argv=None, store=None):
+     store = store or Store()
+ 
+     if args.command == "add":
+-        task = store.add(args.title)
++        try:
++            task = store.add(args.title, due=args.due)
++        except ValueError as exc:
++            print(f"error: {exc}", file=sys.stderr)
++            return 2
+         print(f"added {task.id}: {task.title}")
+     elif args.command == "list":
+-        for task in store.all():
+-            print(f"[{'x' if task.done else ' '}] {task.id} {task.title}")
++        tasks = store.overdue() if args.overdue else store.all()
++        for task in tasks:
++            due = f" (due {task.due})" if task.due else ""
++            print(f"[{'x' if task.done else ' '}] {task.id} {task.title}{due}")
+     elif args.command == "done":
+         task = store.complete(args.id)
+         print(f"done {task.id}: {task.title}")
+diff --git a/tasklite/store.py b/tasklite/store.py
+index f7f0a73..73c3562 100644
+--- a/tasklite/store.py
++++ b/tasklite/store.py
+@@ -1,8 +1,10 @@
+ """Task storage: a JSON file holding a list of tasks."""
+ 
++import datetime
+ import json
+ import os
+ from dataclasses import asdict, dataclass
++from typing import Optional
+ 
+ DEFAULT_PATH = os.environ.get("TASKLITE_FILE", "tasks.json")
+ 
+@@ -12,6 +14,7 @@ class Task:
+     id: int
+     title: str
+     done: bool = False
++    due: Optional[str] = None
+ 
+ 
+ class Store:
+@@ -29,8 +32,15 @@ class Store:
+         with open(self.path, "w") as fh:
+             json.dump([asdict(t) for t in self.tasks.values()], fh, indent=2)
+ 
+-    def add(self, title):
+-        task = Task(id=max(self.tasks, default=0) + 1, title=title)
++    def add(self, title, due=None):
++        if due is not None:
++            try:
++                parsed = datetime.datetime.strptime(due, "%Y-%m-%d").date()
++            except (ValueError, TypeError):
++                raise ValueError("due must be YYYY-MM-DD: %r" % (due,))
++            if parsed.isoformat() != due:
++                raise ValueError("due must be YYYY-MM-DD: %r" % (due,))
++        task = Task(id=max(self.tasks, default=0) + 1, title=title, due=due)
+         self.tasks[task.id] = task
+         self.save()
+         return task
+@@ -40,5 +50,12 @@ class Store:
+         self.save()
+         return self.tasks[task_id]
+ 
++    def overdue(self, today=None):
++        """Open tasks whose due date is before today (YYYY-MM-DD string or date)."""
++        if today is None:
++            today = datetime.date.today()
++        today = today.isoformat() if hasattr(today, "isoformat") else today
++        return [t for t in self.all() if not t.done and t.due is not None and t.due < today]
++
+     def all(self):
+         return sorted(self.tasks.values(), key=lambda t: t.id)
+diff --git a/tests/test_api.py b/tests/test_api.py
+index abd146b..5af2104 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -4,6 +4,7 @@ import tempfile
+ import threading
+ import unittest
+ from http.server import ThreadingHTTPServer
++from urllib.error import HTTPError
+ from urllib.request import Request, urlopen
+ 
+ from tasklite.api import make_handler
+@@ -32,4 +33,22 @@ class ApiTest(unittest.TestCase):
+         self.request("POST", "/tasks", {"title": "call bob"})
+         self.request("POST", "/tasks/1/done", {})
+         self.assertEqual(self.request("GET", "/tasks"),
+-                         [{"id": 1, "title": "call bob", "done": True}])
++                         [{"id": 1, "title": "call bob", "done": True, "due": None}])
++
++    def test_create_with_due(self):
++        task = self.request("POST", "/tasks", {"title": "pay", "due": "2030-01-02"})
++        self.assertEqual(task["due"], "2030-01-02")
++
++    def test_invalid_due_is_400(self):
++        with self.assertRaises(HTTPError) as cm:
++            self.request("POST", "/tasks", {"title": "x", "due": "nope"})
++        self.assertEqual(cm.exception.code, 400)
++        self.assertEqual(self.request("GET", "/tasks"), [])
++
++    def test_overdue_filter(self):
++        self.request("POST", "/tasks", {"title": "old", "due": "2000-01-01"})
++        self.request("POST", "/tasks", {"title": "future", "due": "2999-01-01"})
++        self.request("POST", "/tasks", {"title": "nodue"})
++        result = self.request("GET", "/tasks?overdue=1")
++        self.assertEqual([t["title"] for t in result], ["old"])
++        self.assertEqual(len(self.request("GET", "/tasks")), 3)
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index c462567..76edef8 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -2,7 +2,7 @@ import io
+ import os
+ import tempfile
+ import unittest
+-from contextlib import redirect_stdout
++from contextlib import redirect_stderr, redirect_stdout
+ 
+ from tasklite.cli import main
+ from tasklite.store import Store
+@@ -26,3 +26,24 @@ class CliTest(unittest.TestCase):
+         self.run_cli("add", "buy milk")
+         self.run_cli("done", "1")
+         self.assertEqual(self.run_cli("list")[1], "[x] 1 buy milk\n")
++
++    def test_add_with_due_shown_in_list(self):
++        self.run_cli("add", "pay rent", "--due", "2999-01-01")
++        self.assertEqual(self.run_cli("list")[1], "[ ] 1 pay rent (due 2999-01-01)\n")
++
++    def test_list_overdue(self):
++        self.run_cli("add", "old", "--due", "2000-01-01")
++        self.run_cli("add", "future", "--due", "2999-01-01")
++        self.run_cli("add", "nodue")
++        self.assertEqual(
++            self.run_cli("list", "--overdue")[1], "[ ] 1 old (due 2000-01-01)\n"
++        )
++
++    def test_add_bad_due(self):
++        err = io.StringIO()
++        with redirect_stderr(err):
++            code, out = self.run_cli("add", "x", "--due", "nope")
++        self.assertEqual(code, 2)
++        self.assertEqual(out, "")
++        self.assertIn("error:", err.getvalue())
++        self.assertEqual(self.store.all(), [])
+diff --git a/tests/test_store.py b/tests/test_store.py
+index abe79fe..e7f651c 100644
+--- a/tests/test_store.py
++++ b/tests/test_store.py
+@@ -1,3 +1,5 @@
++import datetime
++import json
+ import os
+ import tempfile
+ import unittest
+@@ -20,3 +22,30 @@ class StoreTest(unittest.TestCase):
+         store.complete(1)
+         reloaded = Store(self.path)
+         self.assertEqual([(t.id, t.done) for t in reloaded.all()], [(1, True), (2, False)])
++
++    def test_add_with_due_and_reload(self):
++        Store(self.path).add("a", due="2026-01-02")
++        self.assertEqual(Store(self.path).all()[0].due, "2026-01-02")
++
++    def test_add_rejects_bad_due(self):
++        store = Store(self.path)
++        for bad in ("2026-13-01", "01/02/2026", "2026-1-2", "tomorrow"):
++            with self.assertRaises(ValueError):
++                store.add("x", due=bad)
++        self.assertEqual(store.all(), [])
++
++    def test_loads_legacy_file_without_due(self):
++        with open(self.path, "w") as fh:
++            json.dump([{"id": 1, "title": "old", "done": False}], fh)
++        task = Store(self.path).all()[0]
++        self.assertIsNone(task.due)
++
++    def test_overdue(self):
++        store = Store(self.path)
++        store.add("past", due="2026-01-01")
++        store.add("today", due="2026-01-10")
++        store.add("none")
++        store.add("done past", due="2026-01-01")
++        store.complete(4)
++        self.assertEqual([t.id for t in store.overdue("2026-01-10")], [1])
++        self.assertEqual([t.id for t in store.overdue(datetime.date(2026, 1, 11))], [1, 2])

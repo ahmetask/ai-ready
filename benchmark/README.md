@@ -46,6 +46,20 @@ In CI, the `Token benchmark` workflow (`.github/workflows/benchmark.yml`, manual
 runs steps 1, 3 and 4 for two refs you name. It needs an `ANTHROPIC_API_KEY` secret, plus a
 `TARGET_REPO_TOKEN` secret when the target repository is private.
 
+## Example project
+
+`example/tasklite/` is a small stdlib Python project (a CLI and an HTTP API over a JSON file,
+with a planted bug) to benchmark on without any outside repository. `run_benchmark.py example
+DEST` copies it into a fresh git repository, and `prepare` then makes that repository AI ready.
+`tasks/tasklite.json` holds its prompts. Each task can name a hidden acceptance test in
+`tasks/tasklite-checks/` (`check`), and the file's `test` command, the project's own tests, also
+has to pass, so a run is graded on working code, not only on which files changed.
+
+`run` flags for this: `--tools` (session tools, for example adding `Bash` and `Agent`),
+`--allowed-tools` (permission rules such as `"Bash(python3 *)"`) and `--save-diffs DIR`, which
+keeps each session's changes as a patch. Results:
+[tasklite-2026-10-21-factory](results/tasklite-2026-10-21-factory/README.md).
+
 ## Measuring the factory
 
 `tasks/myagent-vague.json` holds vague prompts like a developer would type. Run them twice on
