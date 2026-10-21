@@ -24,7 +24,7 @@ _Generated <date> by the ai-ready skill. Checker score: <before>/100 to <after>/
 
 ## Components
 
-<The abstract, then one row per component. Link `.ai-ready/components.json`.>
+<The abstract, then one row per component. Link `.ai-ready/components.md`.>
 
 | Component | Responsibility | Docs | Run | Test | Tests ran? | Time | Needs |
 |---|---|---|---|---|---|---|---|

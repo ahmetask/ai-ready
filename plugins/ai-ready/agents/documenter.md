@@ -10,8 +10,8 @@ You bring the docs in line with a finished change. You get the slug of the work 
 1. Read the tracker (`--work <slug>` output in your instructions) and `git diff --stat`.
    Then read the diffs of the changed files only as far as you need to.
 2. Update only what the change made wrong or incomplete:
-   - `.ai-ready/components.json`: a component's path, responsibility, run or test command,
-     or `test_needs`;
+   - `.ai-ready/components.md`: a component's path, responsibility, run or test command,
+     or test needs, keeping its `- **Field:** value` lines;
    - the component's nested `CLAUDE.md`: commands, conventions and gotchas a future session
      would otherwise get wrong;
    - `README.md` or other user docs, when user-facing behaviour changed.

@@ -8,7 +8,7 @@ factory plans work into tracked tasks and runs them through coder, tester and do
 agents. A benchmark measures what the
 skill saves in tokens.
 
-The component map is `.ai-ready/components.json`. Its checks keep this page honest, and
+The component map is `.ai-ready/components.md`. Its checks keep this page honest, and
 `python3 plugins/ai-ready/scripts/ai_ready_check.py --explain` prints it.
 
 | Component | Path | Responsibility | Docs | Test |
@@ -28,8 +28,8 @@ Everything goes through `plugins/ai-ready/scripts/ai_ready_check.py`:
 - `hooks/hooks.json` runs it after Markdown edits (`--hook post-edit`) and before Claude ends a
   turn (`--hook stop`), but only in repositories that have `.ai-ready/config.json`;
 - `/ai-ready:check` and `/ai-ready:explain` run it on demand;
-- the factory's commands and agents keep their state in `.ai-ready/work/<slug>.json` and read
-  and update it through `--work` and `--work-set`. A `SessionStart` hook (`--hook
+- the factory's commands and agents keep their state in `.ai-ready/work/<slug>.md`
+  (Markdown) and read and update it through `--work` and `--work-set`. A `SessionStart` hook (`--hook
   session-start`) restates unfinished work after a compaction, and the opt-in
   `UserPromptSubmit` hook (`--hook prompt`) offers the factory for long prompts;
 - `action.yml` and `.pre-commit-hooks.yaml` run it in CI, from this repository by path.

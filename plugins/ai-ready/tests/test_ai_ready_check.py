@@ -62,15 +62,35 @@ class CheckerTest(unittest.TestCase):
             sys.stdin = sys.__stdin__
         return code, buf.getvalue()
 
+    def write_map(self, manifest, fmt="md"):
+        if fmt == "md":
+            write(self.root, ".ai-ready/components.md", arc.render_components_md(manifest))
+        else:
+            write(self.root, ".ai-ready/components.json", json.dumps(manifest))
+
     def write_work(self, slug="add-retry"):
-        write(self.root, f".ai-ready/work/{slug}.json", json.dumps({
-            "goal": "Retry failed requests",
-            "tasks": [
-                {"id": "1", "title": "Add retry", "agent": "coder", "component": "api",
-                 "files": ["src/app.py"], "verify": "true", "status": "todo"},
-                {"id": "2", "title": "Document retry", "agent": "documenter", "after": ["1"],
-                 "status": "todo"},
-            ]}))
+        # Hand-written the way the planner agent writes it.
+        write(self.root, f".ai-ready/work/{slug}.md", """# Work: add-retry
+
+- **Goal:** Retry failed requests
+- **Request:** make the client retry
+- **Components:** api
+
+## 1. Add retry
+
+- **Status:** todo
+- **Agent:** coder
+- **Component:** api
+- **Files:** `src/app.py`
+- **Verify:** `true`
+- **After:** none
+
+## 2. Document retry
+
+- **Status:** todo
+- **Agent:** documenter
+- **After:** 1
+""")
 
     def test_clean_repo_passes(self):
         self.assertEqual(self.checks(), [])
@@ -244,20 +264,28 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(paths, [".", "web"])
 
     def test_component_map_checks(self):
+        for fmt in ("md", "json"):
+            with self.subTest(fmt=fmt):
+                self.tearDown()
+                self.setUp()
+                self.component_map_checks(fmt)
+
+    def component_map_checks(self, fmt):
         self.make_monorepo()
+        f = ".ai-ready/components." + fmt
         manifest = {"abstract": "", "components": [
             {"name": "web", "path": "apps/web", "responsibility": "UI", "docs": ["apps/web/README.md"],
              "run": "cd apps/web && pnpm run dev", "test": "cd apps/web && pnpm run e2e",
              "test_needs": ["network"]},
             {"name": "gone", "path": "svc/gone", "responsibility": "x"},
         ]}
-        write(self.root, ".ai-ready/components.json", json.dumps(manifest))
+        self.write_map(manifest, fmt)
         self.assertEqual(self.checks(), [
-            ("component-command", ".ai-ready/components.json", "test:web:e2e"),
-            ("component-map", ".ai-ready/components.json", "abstract"),
-            ("component-path", ".ai-ready/components.json", "gone"),
-            ("component-test-deps", ".ai-ready/components.json", "needs:web:network"),
-            ("unmapped-component", ".ai-ready/components.json", "api"),
+            ("component-command", f, "test:web:e2e"),
+            ("component-map", f, "abstract"),
+            ("component-path", f, "gone"),
+            ("component-test-deps", f, "needs:web:network"),
+            ("unmapped-component", f, "api"),
         ])
         manifest = {"abstract": "Demo.", "components": [
             {"name": "web", "path": "apps/web", "responsibility": "UI", "docs": ["apps/web/README.md"],
@@ -265,19 +293,51 @@ class CheckerTest(unittest.TestCase):
             {"name": "api", "path": "api", "responsibility": "API", "docs": ["api/CLAUDE.md"],
              "library": True, "test": "cd api && make test"},
         ]}
-        write(self.root, ".ai-ready/components.json", json.dumps(manifest))
+        self.write_map(manifest, fmt)
         self.assertEqual(self.checks(), [
-            ("component-command", ".ai-ready/components.json", "test:api:make:test"),
-            ("component-docs", ".ai-ready/components.json", "doc:api:api/CLAUDE.md"),
+            ("component-command", f, "test:api:make:test"),
+            ("component-docs", f, "doc:api:api/CLAUDE.md"),
         ])
+
+    def test_components_md_is_read_as_written_by_hand(self):
+        write(self.root, ".ai-ready/components.md", """# demo
+
+A demo app with one part.
+
+## app
+- Path: `src`
+- **Responsibility**: Serves the app.
+- **Docs:** `README.md`, `CLAUDE.md`
+- **Run:** `python3 src/app.py`
+- **Test:** none
+- **Test needs:** network
+""")
+        m = arc.load_components(self.root)
+        self.assertEqual(m["abstract"], "A demo app with one part.")
+        self.assertEqual(m["components"], [{
+            "name": "app", "path": "src", "responsibility": "Serves the app.",
+            "docs": ["README.md", "CLAUDE.md"], "run": "python3 src/app.py",
+            "test_needs": ["network"]}])
+        self.assertIn(("component-command", ".ai-ready/components.md", "test:app"), self.checks())
+
+    def test_convert_map(self):
+        manifest = {"abstract": "A demo.", "components": [
+            {"name": "app", "path": "src", "responsibility": "Serves it.", "docs": ["README.md"],
+             "run": "python3 src/app.py", "test": "python3 -m unittest", "test_needs": [],
+             "library": True}]}
+        self.write_map(manifest, "json")
+        self.assertEqual(self.run_main("--convert-map")[0], 0)
+        self.assertEqual(arc.load_components(self.root), manifest)
+        self.assertEqual(arc.components_file(self.root), ".ai-ready/components.md")
+        self.assertEqual(self.run_main("--convert-map")[0], 1)  # never overwrites
 
     def test_component_drift(self):
         self.make_monorepo()
-        write(self.root, ".ai-ready/components.json", json.dumps({"abstract": "x", "components": [
+        self.write_map({"abstract": "x", "components": [
             {"name": "web", "path": "apps/web", "responsibility": "UI",
              "docs": ["apps/web/README.md"], "run": "x", "test": "y"},
             {"name": "api", "path": "api", "responsibility": "API", "docs": ["README.md"],
-             "run": "x", "test": "y"}]}))
+             "run": "x", "test": "y"}]})
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "map")
         self.assertEqual(self.checks(base="HEAD"), [])
@@ -292,11 +352,11 @@ class CheckerTest(unittest.TestCase):
         self.assertEqual(self.checks(), [("instructions-size", "api/CLAUDE.md", "too-large")])
 
     def test_explain_and_verify_tests(self):
-        write(self.root, ".ai-ready/components.json", json.dumps({"abstract": "A demo app.", "components": [
+        self.write_map({"abstract": "A demo app.", "components": [
             {"name": "ok", "path": "src", "responsibility": "works", "docs": ["README.md"],
              "test": "python3 -c 'print(1)'", "test_needs": ["docker"]},
             {"name": "bad", "path": "docs", "responsibility": "fails", "test": "exit 3"},
-            {"name": "none", "path": "docs", "responsibility": "untested"}]}))
+            {"name": "none", "path": "docs", "responsibility": "untested"}]})
         code, out = self.run_main("--explain")
         self.assertEqual(code, 0)
         self.assertIn("A demo app.", out)
@@ -346,8 +406,10 @@ class CheckerTest(unittest.TestCase):
         self.assertIn("task 1: doing (try 1)", out)
         code, out = self.run_main("--work-set", "add-retry", "1", "done", "--note", "added\n retry")
         self.assertIn("next: 2", out)
-        data = json.loads((self.root / ".ai-ready/work/add-retry.json").read_text())
-        self.assertEqual(data["tasks"][0]["note"], "added retry")
+        text = (self.root / ".ai-ready/work/add-retry.md").read_text()
+        self.assertIn("## 1. Add retry\n\n- **Status:** done", text)
+        self.assertIn("- **Note:** added retry", text)
+        self.assertEqual(arc.parse_work_md(text)["tasks"][1]["after"], ["1"])
         self.run_main("--work-set", "add-retry", "2", "done")
         self.assertIn("(2/2 done, done)", self.run_main("--work")[1])
         self.assertEqual(self.run_main("--work-set", "add-retry", "9", "done")[0], 1)
@@ -367,8 +429,8 @@ class CheckerTest(unittest.TestCase):
         self.assertIn("attempt limit (2) reached; last: test fails", out)
 
     def test_work_validation(self):
-        write(self.root, ".ai-ready/work/bad.json", json.dumps({"tasks": [
-            {"id": "1", "title": "x", "agent": "painter"}, {"id": "1", "after": ["7"]}]}))
+        write(self.root, ".ai-ready/work/bad.md", "# Work: bad\n\n## 1. x\n- **Agent:** painter\n"
+              "\n## 1.\n- **After:** 7\n")
         code, out = self.run_main("--work", "bad")
         self.assertEqual(code, 1)
         for problem in ("no goal", "duplicate id", "agent must be", "has no title", "unknown task 7"):

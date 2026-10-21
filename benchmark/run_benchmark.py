@@ -49,7 +49,7 @@ PREPARE_PROMPT = (
     "non-interactively and nobody can answer questions or confirm anything: do every phase "
     "without stopping and treat your own component map as confirmed. Apply the fix and merge "
     "cleanups, but do not delete any file (list proposed deletions in the plan instead). Never "
-    "deploy or touch remote resources. Write .ai-ready/components.json, the lean CLAUDE.md and "
+    "deploy or touch remote resources. Write .ai-ready/components.md, the lean CLAUDE.md and "
     ".ai-ready/plan.md, and turn on the check with --init and --update-baseline. Do not set up "
     "CI. Finish with a three-line summary."
 )

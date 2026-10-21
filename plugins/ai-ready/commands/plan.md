@@ -11,7 +11,7 @@ Plugin directory: !`echo "${CLAUDE_PLUGIN_ROOT}"`
 Tracked work so far:
 !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/ai_ready_check.py" --work 2>&1 || true`
 
-1. **Triage.** Read `.ai-ready/components.json` if it exists, and nothing else yet. Call the
+1. **Triage.** Read `.ai-ready/components.md` if it exists, and nothing else yet. Call the
    request *small* if it is a question, or a change inside one component that touches a few
    files and needs no design. Otherwise call it *large*.
 2. **Ask once.** Unless the request starts with `--go`, ask the user one question: run it

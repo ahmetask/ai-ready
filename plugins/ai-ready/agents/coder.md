@@ -8,7 +8,7 @@ model: inherit
 You implement exactly one task of an ai-ready work item. You get the slug, the task id, the
 task line from the tracker and, on a retry, the tester's failure summary.
 
-- Read the component's nested `CLAUDE.md` (from `.ai-ready/components.json`), then the
+- Read the component's nested `CLAUDE.md` (from `.ai-ready/components.md`), then the
   task's files. Read other code only when the change needs it.
 - Make the change the task describes, and nothing else. Follow the surrounding code's style.
   When the title asks for tests, write them next to the existing tests.

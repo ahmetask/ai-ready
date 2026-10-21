@@ -24,7 +24,7 @@
     },
     {
       "paths": [
-        ".ai-ready/components.json"
+        ".ai-ready/components.md"
       ],
       "docs": [
         "docs/architecture.md"

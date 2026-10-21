@@ -4,7 +4,7 @@ A Claude Code plugin that makes a repository **AI ready** and keeps it that way.
 
 - **`make-ai-ready` skill**: first works out what the repository is. It maps the abstract and
   each component's responsibility, docs, run command and test command, and records what the
-  tests need, in `.ai-ready/components.json`. Then it makes the repo clean, well structured
+  tests need, in `.ai-ready/components.md`. Then it makes the repo clean, well structured
   and compact. It prunes stale docs (deleting only with your go-ahead), keeps one place per
   topic, gives each component a short `CLAUDE.md`, writes or trims a lean root `CLAUDE.md`,
   and writes a prioritized plan to `.ai-ready/plan.md`.
@@ -46,13 +46,13 @@ agents, each in its own context, so the main session stays small.
 | Piece | What it does |
 |---|---|
 | `/ai-ready:plan [--go] <prompt>` | Triages the request and asks once whether to use the factory, recommending direct for small changes. Then the `planner` agent writes the plan |
-| `.ai-ready/work/<slug>.json` | The tracker: a goal and 2-8 tasks, each with agent, component, files, a narrow `verify` command, dependencies (`after`), status, attempts and a one-line note |
+| `.ai-ready/work/<slug>.md` | The tracker, in Markdown you can read: a goal and 2-8 tasks, each with agent, component, files, a narrow `verify` command, dependencies (`after`), status, attempts and a one-line note |
 | `/ai-ready:build [<slug> \| [--go] <prompt>]` | The loop. For each ready task, `coder` makes the change, `tester` runs `verify` and reports `PASS` or `FAIL` with a short cause, and a failure goes back to the coder. After 3 attempts (`max_attempts`) the task is blocked and left for you. Ends with the `documenter` and the full check |
 | `/ai-ready:status [<slug>]` | Shows the tracker: tasks, attempts, notes, what runs next |
 | `planner`, `coder`, `tester`, `documenter` | The agents. Each one reads only its component's docs and replies in 8 to 12 lines. The tester waits on slow tests and CI in the background. The documenter updates the component map and docs, keeping only what a future session needs |
 
 Context stays low by design. The orchestrating session reads summaries, not code or logs, and
-gets state from `--work`, not from the JSON. After a compaction or resume, a hook adds one line
+gets state from `--work` rather than by reading the tracker. After a compaction or resume, a hook adds one line
 about unfinished work. Nothing is added to ordinary turns: the commands cost nothing until you
 run them, and the prompt hook that offers the factory for long prompts is opt-in. Commit
 `.ai-ready/work/` to share and resume work across machines, or ignore it.
@@ -76,7 +76,7 @@ work, not one-liners.
 | `missing-command` | error in agent instructions, warning elsewhere | Documented `npm/pnpm/yarn/bun run <x>` or `make <x>` with no such script or target |
 | `doc-drift` | configurable | Code covered by a `doc_watch` rule changed without its docs |
 
-With a component map (`.ai-ready/components.json`):
+With a component map (`.ai-ready/components.md`):
 
 | Check | Severity | What it catches |
 |---|---|---|
@@ -100,29 +100,32 @@ python3 plugins/ai-ready/scripts/ai_ready_check.py --explain         # abstract 
 python3 plugins/ai-ready/scripts/ai_ready_check.py --verify-tests [COMPONENT] [--timeout 600]
 python3 plugins/ai-ready/scripts/ai_ready_check.py --work [SLUG]  # factory tracker
 python3 plugins/ai-ready/scripts/ai_ready_check.py --work-set SLUG TASK todo|doing|done|blocked [--note TEXT]
+python3 plugins/ai-ready/scripts/ai_ready_check.py --convert-map    # components.json -> .md
 ```
 
 ## Component map
 
-`.ai-ready/components.json` describes the repository for agents and humans. The skill
-writes it, and you can also edit it by hand:
+`.ai-ready/components.md` describes the repository for agents and humans. It's Markdown, so it
+reads like a doc. The skill writes it, and you can also edit it by hand, keeping one
+`- **Field:** value` line per field so the checker can parse it:
 
-```json
-{
-  "abstract": "Two or three lines: what the project is and how the parts fit together.",
-  "components": [
-    {
-      "name": "api",
-      "path": "services/api",
-      "responsibility": "HTTP API; owns the orders database.",
-      "docs": ["services/api/CLAUDE.md"],
-      "run": "cd services/api && go run ./cmd/api",
-      "test": "cd services/api && go test ./...",
-      "test_needs": []
-    }
-  ]
-}
+```markdown
+# shop
+
+Two or three lines: what the project is and how the parts fit together.
+
+## api
+
+- **Path:** `services/api`
+- **Responsibility:** HTTP API; owns the orders database.
+- **Docs:** `services/api/CLAUDE.md`
+- **Run:** `cd services/api && go run ./cmd/api`
+- **Test:** `cd services/api && go test ./...`
+- **Test needs:** none
 ```
+
+The older `.ai-ready/components.json` is still read. `--convert-map` turns it into
+`components.md`.
 
 `--discover` proposes candidates from build files (`package.json`, `pyproject.toml`, `go.mod`,
 `Cargo.toml`, Maven/Gradle, `Gemfile`, `Dockerfile`...) and guesses their commands.

@@ -13,7 +13,8 @@ Deterministic, stdlib-only checks that an agent (or a human) can rely on:
   missing-command     `npm run x` / `make x` in docs match a real script / target
   doc-drift           code covered by a doc_watch rule changed without its docs
 
-With a component map (.ai-ready/components.json: abstract, and per component its path,
+With a component map (.ai-ready/components.md, or the older components.json: abstract, and per
+component its path,
 responsibility, docs, run and test commands, and what its tests need):
 
   component-path      a mapped component's path exists
@@ -28,12 +29,14 @@ Usage:
   ai_ready_check.py [--root DIR] [--format text|json] [--base REF]
                     [--update-baseline] [--no-baseline] [--init]
   ai_ready_check.py --discover | --explain | --verify-tests [COMPONENT] [--timeout S]
+  ai_ready_check.py --convert-map           (components.json -> components.md)
   ai_ready_check.py --work [SLUG] | --work-set SLUG TASK STATUS [--note TEXT]
   ai_ready_check.py --hook post-edit|stop|prompt|session-start   (hook JSON on stdin)
 
 The factory (/ai-ready:plan and /ai-ready:build) tracks planned work in
-.ai-ready/work/<slug>.json; --work prints it compactly and --work-set updates one task, so
-agents never re-read or rewrite the whole tracker.
+.ai-ready/work/<slug>.md; --work prints it compactly and --work-set updates one task, so
+agents never re-read or rewrite the whole tracker. Everything the plugin writes for people to
+read (component map, trackers, plan) is Markdown; only config and baseline stay JSON.
 
 Configuration lives in .ai-ready/config.json; accepted pre-existing issues live in
 .ai-ready/baseline.json so only *new* problems fail CI and hooks.
@@ -56,7 +59,8 @@ from urllib.parse import unquote
 CONFIG_DIR = ".ai-ready"
 CONFIG_FILE = f"{CONFIG_DIR}/config.json"
 BASELINE_FILE = f"{CONFIG_DIR}/baseline.json"
-COMPONENTS_FILE = f"{CONFIG_DIR}/components.json"
+COMPONENTS_FILE = f"{CONFIG_DIR}/components.md"
+COMPONENTS_JSON = f"{CONFIG_DIR}/components.json"  # the older format, still read
 WORK_DIR = f"{CONFIG_DIR}/work"
 
 DEFAULT_CONFIG = {
@@ -478,8 +482,95 @@ NOT_COMPONENT_DIRS = {"examples", "example", "samples", "sample", "fixtures", "t
                       "test", "tests", "docs", "doc", "benchmarks", "e2e"}
 
 
+# Markdown records: the component map and work trackers are Markdown so people can read them.
+# A record is "# Title", then "- **Field:** value" lines, then "## Section" blocks of the same.
+FIELD_RE = re.compile(r"^\s*[-*]\s+(?:\*\*|__)?([A-Za-z][A-Za-z ]*?)(?::(?:\*\*|__)|(?:\*\*|__)?:)\s*(.*)$")
+NONE_VALUES = {"", "-", "none", "n/a", "no"}
+
+
+def md_value(v: str) -> str:
+    v = v.strip()
+    if len(v) > 1 and v[0] == v[-1] == "`" and "`" not in v[1:-1]:
+        return v[1:-1]
+    return v
+
+
+def md_list(v) -> list[str]:
+    if isinstance(v, list):
+        return v
+    if str(v).strip().lower() in NONE_VALUES:
+        return []
+    return [md_value(x) for x in str(v).split(",") if x.strip()]
+
+
+def parse_record(text: str) -> tuple[str, dict, list[tuple[str, dict]]]:
+    """Return (title, top fields and prose, [(section heading, fields and prose)])."""
+    title, top, sections = "", {"_text": []}, []
+    cur = top
+    for line in text.splitlines():
+        if line.startswith("# ") and not title and not sections:
+            title = line[2:].strip()
+        elif line.startswith("## "):
+            cur = {"_text": []}
+            sections.append((line[3:].strip(), cur))
+        else:
+            m = FIELD_RE.match(line)
+            if m:
+                cur[m.group(1).strip().lower().replace(" ", "_")] = m.group(2).strip()
+            elif line.strip():
+                cur["_text"].append(line.strip())
+    return title, top, sections
+
+
+def md_field(name: str, value) -> str:
+    if isinstance(value, list):
+        value = ", ".join(f"`{v}`" for v in value) if value else "none"
+    return f"- **{name}:** {value}"
+
+
+def parse_components_md(text: str) -> dict:
+    _, top, sections = parse_record(text)
+    comps = []
+    for name, f in sections:
+        c = {"name": name, "path": md_value(f.get("path", "")),
+             "responsibility": f.get("responsibility") or " ".join(f["_text"]),
+             "docs": md_list(f.get("docs", "")), "test_needs": md_list(f.get("test_needs", ""))}
+        for key in ("run", "test"):
+            if md_value(f.get(key, "")).lower() not in NONE_VALUES:
+                c[key] = md_value(f[key])
+        if f.get("library", "").strip().lower() in ("yes", "true"):
+            c["library"] = True
+        comps.append(c)
+    return {"abstract": top.get("abstract") or " ".join(top["_text"]), "components": comps}
+
+
+def render_components_md(manifest: dict, title: str = "Components") -> str:
+    out = [f"# {title}", "", str(manifest.get("abstract", "")).strip(), ""]
+    for c in manifest.get("components") or []:
+        out += [f"## {c.get('name') or c.get('path')}", "",
+                md_field("Path", f"`{c.get('path', '')}`"),
+                md_field("Responsibility", c.get("responsibility", "")),
+                md_field("Docs", list(c.get("docs") or []))]
+        for key in ("run", "test"):
+            out.append(md_field(key.capitalize(), f"`{c[key]}`" if c.get(key) else "none"))
+        out.append(md_field("Test needs", ", ".join(c.get("test_needs") or []) or "none"))
+        if c.get("library"):
+            out.append(md_field("Library", "yes"))
+        out.append("")
+    return "\n".join(out)
+
+
+def components_file(root: Path) -> str:
+    """The map in use: components.md, else an older components.json."""
+    if not (root / COMPONENTS_FILE).is_file() and (root / COMPONENTS_JSON).is_file():
+        return COMPONENTS_JSON
+    return COMPONENTS_FILE
+
+
 def load_components(root: Path) -> dict | None:
-    data = load_json(root / COMPONENTS_FILE, None)
+    if (root / COMPONENTS_FILE).is_file():
+        return parse_components_md(_read(root / COMPONENTS_FILE))
+    data = load_json(root / COMPONENTS_JSON, None)
     if not isinstance(data, dict) or not isinstance(data.get("components"), list):
         return None
     return data
@@ -607,57 +698,58 @@ def check_components(root: Path, cfg: dict, base: str | None) -> list[Issue]:
     if manifest is None:
         return []
     issues: list[Issue] = []
+    map_file = components_file(root)
     comps = [c for c in manifest["components"] if isinstance(c, dict)]
     if not str(manifest.get("abstract", "")).strip():
-        issues.append(Issue("component-map", "warning", COMPONENTS_FILE,
+        issues.append(Issue("component-map", "warning", map_file,
                             "no abstract: say in a few lines what the project is", "abstract"))
     facts = Facts(root, cfg)
     for c in comps:
         name, path = str(c.get("name") or c.get("path")), str(c.get("path", ""))
         if not path or not (root / path).exists():
-            issues.append(Issue("component-path", "error", COMPONENTS_FILE,
+            issues.append(Issue("component-path", "error", map_file,
                                 f"component '{name}' points at '{path}', which does not exist", name))
             continue
         if not str(c.get("responsibility", "")).strip():
-            issues.append(Issue("component-map", "warning", COMPONENTS_FILE,
+            issues.append(Issue("component-map", "warning", map_file,
                                 f"component '{name}' has no responsibility", f"responsibility:{name}"))
         docs = [str(d) for d in c.get("docs") or []]
         if not docs:
-            issues.append(Issue("component-docs", "warning", COMPONENTS_FILE,
+            issues.append(Issue("component-docs", "warning", map_file,
                                 f"component '{name}' has no docs", f"docs:{name}"))
         for d in docs:
             if not (root / d).is_file():
-                issues.append(Issue("component-docs", "error", COMPONENTS_FILE,
+                issues.append(Issue("component-docs", "error", map_file,
                                     f"component '{name}' lists doc '{d}', which does not exist",
                                     f"doc:{name}:{d}"))
         for field in ("run", "test"):
             cmd = c.get(field)
             if not cmd:
                 if field == "test" or not c.get("library"):
-                    issues.append(Issue("component-command", "warning", COMPONENTS_FILE,
+                    issues.append(Issue("component-command", "warning", map_file,
                                         f"component '{name}' has no {field} command",
                                         f"{field}:{name}"))
                 continue
             for m in SCRIPT_RE.finditer(str(cmd)):
                 if m.group(1) not in facts.scripts():
-                    issues.append(Issue("component-command", "error", COMPONENTS_FILE,
+                    issues.append(Issue("component-command", "error", map_file,
                                         f"component '{name}' {field} command uses '{m.group(0)}', "
                                         "but no package.json defines it", f"{field}:{name}:{m.group(1)}"))
             for m in MAKE_RE.finditer(str(cmd)):
                 for target in make_goals(m.group(1)):
                     if target not in facts.targets():
-                        issues.append(Issue("component-command", "error", COMPONENTS_FILE,
+                        issues.append(Issue("component-command", "error", map_file,
                                             f"component '{name}' {field} command uses 'make {target}', "
                                             "but no Makefile defines it", f"{field}:{name}:make:{target}"))
         needs = sorted(set(map(str, c.get("test_needs") or [])))
         if needs:
-            issues.append(Issue("component-test-deps", "warning", COMPONENTS_FILE,
+            issues.append(Issue("component-test-deps", "warning", map_file,
                                 f"component '{name}' tests need {', '.join(needs)}; make them run "
                                 "offline with fakes or local stand-ins", f"needs:{name}:{','.join(needs)}"))
     for cand in discover(root, cfg):
         if cand["workspace_root"] or _covered(cand["path"], comps):
             continue
-        issues.append(Issue("unmapped-component", "warning", COMPONENTS_FILE,
+        issues.append(Issue("unmapped-component", "warning", map_file,
                             f"'{cand['path']}' looks like a component ({', '.join(cand['kinds'])}) "
                             "but is not in the component map", cand["path"]))
     changed = changed_files(root, base) or set()
@@ -733,19 +825,63 @@ def factory_cfg(cfg: dict) -> dict:
 def work_path(root: Path, slug: str) -> Path:
     if not SLUG_RE.match(slug):
         raise ValueError(f"invalid work slug '{slug}': use lowercase letters, digits and dashes")
-    return root / WORK_DIR / f"{slug}.json"
+    return root / WORK_DIR / f"{slug}.md"
+
+
+TASK_HEADING_RE = re.compile(r"^(\S+?)\.(?:\s+(.*))?$")
+
+
+def parse_work_md(text: str) -> dict:
+    _, top, sections = parse_record(text)
+    data = {"goal": top.get("goal", ""), "request": top.get("request", ""),
+            "created": top.get("created", ""), "components": md_list(top.get("components", "")),
+            "tasks": []}
+    for heading, f in sections:
+        m = TASK_HEADING_RE.match(heading)
+        tid, title = (m.group(1), m.group(2) or "") if m else ("", heading)
+        task = {"id": tid, "title": title.strip(), "agent": f.get("agent", "coder").strip(),
+                "component": md_value(f.get("component", "")),
+                "files": md_list(f.get("files", "")),
+                "after": md_list(f.get("after", "")),
+                "status": f.get("status", "todo").strip().lower(),
+                "attempts": int(f["attempts"]) if f.get("attempts", "").strip().isdigit() else 0,
+                "note": f.get("note", "")}
+        verify = md_value(f.get("verify", ""))
+        if verify.lower() not in NONE_VALUES:
+            task["verify"] = verify
+        data["tasks"].append(task)
+    return data
+
+
+def render_work_md(slug: str, data: dict) -> str:
+    out = [f"# Work: {slug}", "", md_field("Goal", data.get("goal", "")),
+           md_field("Request", data.get("request", "")),
+           md_field("Created", data.get("created", "")),
+           md_field("Components", ", ".join(data.get("components") or []) or "none"), ""]
+    for t in tasks_of(data):
+        out += [f"## {t.get('id')}. {t.get('title', '')}", "",
+                md_field("Status", t.get("status", "todo")),
+                md_field("Agent", t.get("agent", "coder")),
+                md_field("Component", t.get("component") or "none"),
+                md_field("Files", list(t.get("files") or [])),
+                md_field("Verify", f"`{t['verify']}`" if t.get("verify") else "none"),
+                md_field("After", ", ".join(map(str, t.get("after") or [])) or "none"),
+                md_field("Attempts", t.get("attempts") or 0)]
+        if t.get("note"):
+            out.append(md_field("Note", t["note"]))
+        out.append("")
+    return "\n".join(out)
+
+
+def load_work(path: Path) -> dict | None:
+    return parse_work_md(_read(path)) if path.is_file() else None
 
 
 def list_work(root: Path) -> list[tuple[str, dict]]:
     """All tracked work, most recently changed first."""
     d = root / WORK_DIR
-    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
-    out = []
-    for f in files:
-        data = load_json(f, None)
-        if isinstance(data, dict) and isinstance(data.get("tasks"), list):
-            out.append((f.stem, data))
-    return out
+    files = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []
+    return [(f.stem, load_work(f)) for f in files]
 
 
 def validate_work(data: dict) -> list[str]:
@@ -837,8 +973,8 @@ def set_task(root: Path, cfg: dict, slug: str, tid: str, status: str, note: str 
     if status not in TASK_STATUSES:
         raise ValueError(f"status must be one of {', '.join(TASK_STATUSES)}")
     path = work_path(root, slug)
-    data = load_json(path, None)
-    if not isinstance(data, dict):
+    data = load_work(path)
+    if data is None:
         raise ValueError(f"no work '{slug}' in {WORK_DIR}")
     task = next((t for t in tasks_of(data) if str(t.get("id")) == tid), None)
     if task is None:
@@ -852,7 +988,7 @@ def set_task(root: Path, cfg: dict, slug: str, tid: str, status: str, note: str 
     task["status"] = status
     if note is not None:
         task["note"] = " ".join(note.split())[:200]
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    path.write_text(render_work_md(slug, data), encoding="utf-8")
     return f"task {tid}: {status}" + (f" (try {task['attempts']})" if status == "doing" else "") \
         + "\n" + format_work(slug, data).splitlines()[-1]
 
@@ -980,11 +1116,11 @@ def prompt_hook(payload: dict, cfg: dict) -> int:
 def show_work(root: Path, slug: str, fmt: str) -> int:
     if slug:
         try:
-            data = load_json(work_path(root, slug), None)
+            data = load_work(work_path(root, slug))
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
             return 1
-        if not isinstance(data, dict):
+        if data is None:
             print(f"error: no work '{slug}' in {WORK_DIR}", file=sys.stderr)
             return 1
         print(json.dumps(data, indent=2) if fmt == "json" else format_work(slug, data))
@@ -1028,6 +1164,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--work-set", nargs=3, metavar=("SLUG", "TASK", "STATUS"),
                     help="set a task's status: " + "|".join(TASK_STATUSES))
     ap.add_argument("--note", help="with --work-set: a one-line note kept on the task")
+    ap.add_argument("--convert-map", action="store_true",
+                    help=f"write {COMPONENTS_FILE} from an older {COMPONENTS_JSON}")
     args = ap.parse_args(argv)
 
     if args.hook:
@@ -1054,6 +1192,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.work is not None:
         return show_work(root, args.work, args.format)
+    if args.convert_map:
+        data = load_json(root / COMPONENTS_JSON, None)
+        if not isinstance(data, dict) or (root / COMPONENTS_FILE).exists():
+            print(f"nothing to convert: needs {COMPONENTS_JSON} and no {COMPONENTS_FILE}",
+                  file=sys.stderr)
+            return 1
+        (root / COMPONENTS_FILE).write_text(render_components_md(data, root.name), encoding="utf-8")
+        print(f"wrote {COMPONENTS_FILE}; delete {COMPONENTS_JSON} once it reads right")
+        return 0
     if args.discover:
         print(json.dumps(discover(root, cfg), indent=2))
         return 0

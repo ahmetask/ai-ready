@@ -54,14 +54,28 @@ Do this first, before changing anything. It also suits a repo no agent has worke
    plan items (phase 5), with the concrete fix: a fake or in-memory adapter, SQLite instead
    of a server, recorded HTTP fixtures, a `make test` that sets everything up, or a split
    between fast unit tests and integration tests.
-5. Save the map as `.ai-ready/components.json`:
+5. Save the map as `.ai-ready/components.md`, Markdown so people read it as easily as
+   agents. The checker parses it, so keep this shape: the abstract under the title, then
+   one `## <name>` per component with these field lines:
 
-   ```json
-   {"abstract": "...",
-    "components": [{"name": "api", "path": "services/api", "responsibility": "...",
-                    "docs": ["services/api/CLAUDE.md"], "run": "cd services/api && make dev",
-                    "test": "cd services/api && go test ./...", "test_needs": []}]}
+   ```markdown
+   # <project>
+
+   Two or three lines: what the project is and how the parts fit together.
+
+   ## api
+
+   - **Path:** `services/api`
+   - **Responsibility:** HTTP API; owns the orders database.
+   - **Docs:** `services/api/CLAUDE.md`
+   - **Run:** `cd services/api && make dev`
+   - **Test:** `cd services/api && go test ./...`
+   - **Test needs:** none
    ```
+
+   Use `- **Library:** yes` for a component with nothing to run. If the repository has an
+   older `.ai-ready/components.json`, run the checker with `--convert-map` and delete the
+   JSON file.
 
    The check then keeps the map honest. It flags paths that no longer exist, missing docs,
    undefined run or test commands, new components that aren't mapped, and components whose
@@ -109,7 +123,7 @@ cleanup as a list grouped by **fix**, **merge** and **delete**, with one line pe
   - `README.md` is for humans: what it is, and how to install, run and contribute;
   - `CLAUDE.md` is for agents (phase 4);
   - `docs/architecture.md` holds the abstract and the component table from the map
-    (`--explain` prints it). Keep it in sync with `.ai-ready/components.json`;
+    (`--explain` prints it). Keep it in sync with `.ai-ready/components.md`;
   - `docs/` holds one file per topic beyond that (deploy, a specific subsystem), each linked
     from `README.md` or `CLAUDE.md` so nothing is orphaned;
   - each component gets a nested `<path>/CLAUDE.md` of at most ~30 lines, covering what it

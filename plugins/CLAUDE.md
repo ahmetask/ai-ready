@@ -17,7 +17,11 @@ in `hooks/hooks.json`.
 - `SKILL.md` refers to its own phases by number ("phase 4"); renumber those references when
   adding a phase.
 - This file lives outside `plugins/ai-ready/` so it is not shipped with the plugin.
-- Factory state lives only in `.ai-ready/work/<slug>.json`. Commands and agents change it
+- Everything the plugin generates for people to read is Markdown that the checker also
+  parses: the component map (`components.md`, `- **Field:** value` lines under `## name`)
+  and trackers. Keep `parse_*_md` and `render_*_md` in step, and keep reading the older
+  `components.json`, because users still have it.
+- Factory state lives only in `.ai-ready/work/<slug>.md`. Commands and agents change it
   through `--work-set`, never by rewriting the file, and only the orchestrating command
   calls it. Agent replies are capped at a few lines because the orchestrator keeps them in
   its context.

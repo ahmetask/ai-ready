@@ -16,14 +16,14 @@ Tracked work so far:
 You orchestrate. Agents do the reading, coding and testing in their own contexts, and the
 tracker holds the state, so keep your own context small. Don't read source files or full test
 logs yourself. Pass each agent only its task line and the previous agent's summary, and get
-the state from `TRACK --work <slug>`, never by reading the JSON.
+the state from `TRACK --work <slug>`, never by reading or editing the tracker file.
 
 ## 1. Pick the work
 
 - If the arguments name a slug listed above, continue that work.
 - If they are empty, continue the unfinished work listed first. If there is none, ask what
   to build.
-- Otherwise they are a new request. Read `.ai-ready/components.json`, then decide whether the
+- Otherwise they are a new request. Read `.ai-ready/components.md`, then decide whether the
   request is small (a question, or a few files in one component) or large. Unless the
   arguments start with `--go`, ask the user once: factory or direct? Recommend direct for
   small requests. If they pick direct, do it directly and stop. For the factory, pick a

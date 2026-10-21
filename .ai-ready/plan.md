@@ -31,7 +31,7 @@ of that is fixed. What remains is a lint/type-check step and tests for the bench
 ## Components
 
 ai-ready is a Claude Code plugin that makes repositories AI ready, plus a checker that keeps
-them that way. The map is in [`components.json`](components.json).
+them that way. The map is in [`components.md`](components.md).
 
 | Component | Responsibility | Docs | Run | Test | Tests ran? | Time | Needs |
 |---|---|---|---|---|---|---|---|
@@ -67,7 +67,7 @@ Quick wins first. Effort: S (under an hour), M (a day), L (more).
 |---|---|---|---|---|
 | 1 | Add a CI-only `ruff check` (and optionally `mypy`) step; the code stays stdlib-only, since only CI installs the tools | Catches mistakes before review; agents fix what they can measure | `.github/workflows/ci.yml` | S |
 | 2 | Unit tests for `run_benchmark.py` grading and aggregation, using the recorded JSONL | A change to the benchmark currently has no fast check | `benchmark/` | M |
-| 3 | Give the benchmark component a real `test` command once item 2 lands | `--verify-tests` would then prove more than "compare runs" | `.ai-ready/components.json` | S |
+| 3 | Give the benchmark component a real `test` command once item 2 lands | `--verify-tests` would then prove more than "compare runs" | `.ai-ready/components.md` | S |
 | 4 | Split `ai_ready_check.py` by section if it grows past ~1,500 lines; it stays one file for users, so build it from parts or keep it under the limit | Large files cost agents context | `plugins/ai-ready/scripts/` | M |
 
 ## Keeping it ready
