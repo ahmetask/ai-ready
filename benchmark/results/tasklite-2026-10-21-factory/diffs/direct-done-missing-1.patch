@@ -1,17 +1,5 @@
-diff --git a/tasklite/CLAUDE.md b/tasklite/CLAUDE.md
-index 15587e3..4b15b27 100644
---- a/tasklite/CLAUDE.md
-+++ b/tasklite/CLAUDE.md
-@@ -8,6 +8,6 @@ CLI (`cli.py`), HTTP API (`api.py`) and JSON-file storage (`store.py`). Both fro
- 
- ## Gotchas
- - `DEFAULT_PATH` in `store.py` reads `TASKLITE_FILE` at import time; tests must pass an explicit `Store(path)`.
--- `Store.complete` raises `KeyError` on an unknown id; the API does not catch it.
-+- `Store.complete` raises `KeyError` on an unknown id; the CLI prints `no such task: <id>` (exit 1) and the API answers 404.
- - A new CLI command needs a subparser and a branch in `cli.main`; a new API route goes in `api.do_GET`/`do_POST`.
- - Never commit `tasks.json` (gitignored user data).
 diff --git a/tasklite/api.py b/tasklite/api.py
-index 3c964a6..4ad88de 100644
+index 3c964a6..6fea183 100644
 --- a/tasklite/api.py
 +++ b/tasklite/api.py
 @@ -33,7 +33,12 @@ def make_handler(store):
@@ -21,7 +9,7 @@ index 3c964a6..4ad88de 100644
 -                self._send(200, task_json(store.complete(int(parts[1]))))
 +                try:
 +                    task = store.complete(int(parts[1]))
-+                except (KeyError, ValueError):
++                except KeyError:
 +                    self._send(404, {"error": "not found"})
 +                    return
 +                self._send(200, task_json(task))
@@ -46,7 +34,7 @@ index 68ab083..c81ce69 100644
      elif args.command == "stats":
          print(f"total: {len(store.all())}")
 diff --git a/tests/test_api.py b/tests/test_api.py
-index abd146b..8768254 100644
+index abd146b..e234b4e 100644
 --- a/tests/test_api.py
 +++ b/tests/test_api.py
 @@ -4,6 +4,7 @@ import tempfile
@@ -62,7 +50,7 @@ index abd146b..8768254 100644
          self.assertEqual(self.request("GET", "/tasks"),
                           [{"id": 1, "title": "call bob", "done": True}])
 +
-+    def test_done_unknown_id_is_404(self):
++    def test_done_unknown_id(self):
 +        with self.assertRaises(HTTPError) as ctx:
 +            self.request("POST", "/tasks/99/done", {})
 +        self.assertEqual(ctx.exception.code, 404)

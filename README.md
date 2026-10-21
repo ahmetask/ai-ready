@@ -58,8 +58,8 @@ run them, and the prompt hook that offers the factory for long prompts is opt-in
 `.ai-ready/work/` to share and resume work across machines, or ignore it.
 
 What it costs: on the small `tasklite` example, the factory passed the same 12 of 12 runs as
-plain sessions but cost 3.2× more. Every change it made came with tests, and features came
-with docs, which plain sessions did only sometimes
+plain sessions but cost 3.1× more. It added tests and updated docs on every change, which plain
+sessions did only sometimes. The results include the files it generated
 ([results](benchmark/results/tasklite-2026-10-21-factory/README.md)). Use it for multi-step
 work, not one-liners.
 

@@ -1,0 +1,33 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index a503f2e..2395121 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -15,6 +15,7 @@ Task tracker: CLI + JSON HTTP API over one JSON file. Python 3.8+, stdlib only (
+ ## Gotchas
+ - `store.DEFAULT_PATH` reads `TASKLITE_FILE` at import time; setting it later has no effect.
+ - `Store.complete` raises `KeyError` on an unknown id; neither the CLI nor the API handles it.
++- `Task.due` is an optional `YYYY-MM-DD` string (default None, so old `tasks.json` still loads). `Store.add(..., due=)` raises `ValueError` on a bad date (CLI maps it to a parser error, API to 400). `Store.overdue(today=None)` is open tasks due strictly before today.
+ - New CLI commands: subparser plus `if` branch in `cli.py`. New API routes: `do_GET`/`do_POST` in `api.py`.
+ 
+ ## Layout
+diff --git a/README.md b/README.md
+index 5772552..b80ee8d 100644
+--- a/README.md
++++ b/README.md
+@@ -11,6 +11,16 @@ python3 -m tasklite stats
+ python3 -m tasklite.api          # API on http://127.0.0.1:8080
+ ```
+ 
++Due dates (`YYYY-MM-DD`, optional):
++
++```
++python3 -m tasklite add "pay rent" --due 2026-11-01
++python3 -m tasklite list --overdue     # open tasks due before today
++```
++
++API: `POST /tasks` accepts `"due"` (bad date gives 400 `{"error": ...}`), `GET /tasks?overdue=1`
++(or `true`) lists overdue tasks, and task JSON includes `"due"` (`null` if unset).
++
+ Tasks are stored in `tasks.json` in the current directory (override with `TASKLITE_FILE`).
+ 
+ Tests: `python3 -m unittest discover -s tests -t .`

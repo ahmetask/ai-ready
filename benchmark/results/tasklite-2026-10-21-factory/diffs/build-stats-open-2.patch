@@ -1,34 +1,50 @@
-diff --git a/.ai-ready/work/stats-open-done.json b/.ai-ready/work/stats-open-done.json
+diff --git a/.ai-ready/work/stats-open-done.md b/.ai-ready/work/stats-open-done.md
 new file mode 100644
-index 0000000..b7a57ec
+index 0000000..9e8e3fc
 --- /dev/null
-+++ b/.ai-ready/work/stats-open-done.json
-@@ -0,0 +1,25 @@
-+{
-+  "goal": "`tasklite stats` prints `total: N, open: N, done: N` counts.",
-+  "request": "make `tasklite stats` also say how many tasks are open and done, like `total: 3, open: 2, done: 1`.",
-+  "created": "2026-10-21",
-+  "components": [
-+    "tasklite"
-+  ],
-+  "tasks": [
-+    {
-+      "id": "1",
-+      "title": "Print total, open and done counts in the stats branch of cli.main, and add a stats test in tests/test_cli.py (add 3 tasks, complete 1, expect 'total: 3, open: 2, done: 1')",
-+      "agent": "coder",
-+      "component": "tasklite",
-+      "files": [
-+        "tasklite/cli.py",
-+        "tests/test_cli.py"
-+      ],
-+      "verify": "python3 -m unittest tests.test_cli",
-+      "after": [],
-+      "status": "done",
-+      "attempts": 1,
-+      "note": "stats prints total/open/done counts; added test_stats"
-+    }
-+  ]
-+}
++++ b/.ai-ready/work/stats-open-done.md
+@@ -0,0 +1,28 @@
++# Work: stats-open-done
++
++- **Goal:** `tasklite stats` prints `total: N, open: N, done: N`.
++- **Request:** make `tasklite stats` also say how many tasks are open and done, like `total: 3, open: 2, done: 1`.
++- **Created:** 2026-10-21
++- **Components:** tasklite
++
++## 1. Print open and done counts in stats, with a test in tests/test_cli.py
++
++- **Status:** done
++- **Agent:** coder
++- **Component:** tasklite
++- **Files:** `tasklite/cli.py`, `tests/test_cli.py`
++- **Verify:** `python3 -m unittest tests.test_cli`
++- **After:** none
++- **Attempts:** 1
++- **Note:** stats prints total/open/done; test added
++
++## 2. Update stats usage in README
++
++- **Status:** done
++- **Agent:** documenter
++- **Component:** tasklite
++- **Files:** `README.md`
++- **Verify:** none
++- **After:** 1
++- **Attempts:** 1
++- **Note:** README stats line updated
+diff --git a/README.md b/README.md
+index 5772552..533a825 100644
+--- a/README.md
++++ b/README.md
+@@ -7,7 +7,7 @@ standard library only.
+ python3 -m tasklite add "buy milk"
+ python3 -m tasklite list
+ python3 -m tasklite done 1
+-python3 -m tasklite stats
++python3 -m tasklite stats        # prints "total: N, open: N, done: N"
+ python3 -m tasklite.api          # API on http://127.0.0.1:8080
+ ```
+ 
 diff --git a/tasklite/cli.py b/tasklite/cli.py
 index 68ab083..b90e610 100644
 --- a/tasklite/cli.py
@@ -45,18 +61,16 @@ index 68ab083..b90e610 100644
  
  
 diff --git a/tests/test_cli.py b/tests/test_cli.py
-index c462567..2bc14f3 100644
+index c462567..0da9ab8 100644
 --- a/tests/test_cli.py
 +++ b/tests/test_cli.py
-@@ -26,3 +26,11 @@ class CliTest(unittest.TestCase):
+@@ -26,3 +26,9 @@ class CliTest(unittest.TestCase):
          self.run_cli("add", "buy milk")
          self.run_cli("done", "1")
          self.assertEqual(self.run_cli("list")[1], "[x] 1 buy milk\n")
 +
-+    def test_stats(self):
++    def test_stats_open_done(self):
 +        for title in ("a", "b", "c"):
 +            self.run_cli("add", title)
 +        self.run_cli("done", "1")
-+        self.assertEqual(
-+            self.run_cli("stats")[1], "total: 3, open: 2, done: 1\n"
-+        )
++        self.assertEqual(self.run_cli("stats")[1], "total: 3, open: 2, done: 1\n")
